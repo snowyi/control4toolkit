@@ -1,0 +1,106 @@
+#!/usr/bin/perl -w
+
+use strict;
+use Data::Dumper;
+use IO::Socket;
+use IO::Select;
+use XML::LibXML;
+
+my $xml = XML::LibXML->new();
+
+my $remote = IO::Socket::INET->new(
+	Proto     => "tcp",
+	PeerAddr  => $ARGV[0] || '127.0.0.1',
+	PeerPort  => "5020",
+) or die("Ouch: $!");
+
+my $sel = IO::Select->new();
+$sel->add($remote);
+
+# <c4soap name="GetVersionInfo" async="False" />
+# <c4soap name="EnableEvents" async="True"><param name="enable" type="bool">1</param></c4soap>
+# <c4soap name="GetItems" async="False"><param name="filter" type="number">0</param></c4soap>
+
+$| = 1;      # Enable Autoflush
+
+my $r;
+
+#$r = SendCommand("GetVersionInfo");
+#$r = SendCommand("EnableEvents",1, enable => [ "bool", 1 ] );
+$r = SendCommand("GetItems",0,     filter => [ "number", 0 ] );
+
+#print Dump("",$r->{c4soap}->{systemitems}->{item});
+
+
+
+
+sub Dump {
+	my $prefix = shift;
+	my $ref = shift;
+	if (ref $ref eq "HASH") {
+		my %hash = %{$ref};
+		for my $key (keys %hash) {
+			Dump($prefix."->{$key}",$hash{$key});
+		}
+	}
+	elsif (ref $ref eq "ARRAY") {
+		my @array = @{$ref};
+		my $x = 0;
+		for my $value (@array) {
+			Dump($prefix."->[$x]",$value);
+		}
+	}
+	else {
+		if (defined $ref) {
+			print $prefix." = \"$ref\"\n";
+		} else {
+			print $prefix." = undef\n";
+		}
+	}
+}
+
+
+
+sub SendCommand {
+
+	my ($Command,$ASync,%Param) = @_;
+	my $Payload = '<c4soap name="'.$Command.'" async="'.(defined $ASync && $ASync ? 'True' : 'False').'"';
+
+	if (!scalar keys %Param) {
+		$Payload .= " />";
+
+	} else {
+		$Payload .= ">";
+		for (keys %Param) {
+			$Payload .= '<param name="'.$_.'" type="'.$Param{$_}->[0].'">'.$Param{$_}->[1].'</param>';
+		}
+		$Payload .= "</c4soap>";
+
+	}
+
+	if ($remote->send($Payload."\0") == length($Payload)+1) {
+		#return if $ASync;
+
+		my $timeout = time() + 2;
+		my $Reply = "";
+
+		while((not length $Reply && $timeout <= time())) {
+			my $data;
+			for my $sock ($sel->can_read(0)) {
+				$sock->recv($data,100);
+				$Reply .= $data;
+			}
+	
+		}
+		my $doc = $xml->parse_string( $Reply );
+		my $xpc = XML::LibXML::XPathContext->new($doc);
+
+		use Data::Dumper;
+		for my $element ($xpc->find('//name')->get_nodelist()) {
+			print Dumper $element;
+		}
+
+
+	}
+	return 0;
+}
