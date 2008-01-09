@@ -11,3 +11,4 @@ Soo, yeah. Let's just keep hacking until they make their stuff open source :)
 
 When I first got my Home Theatre Controller, I found out that between Composer and the Director, stuff will go in XML-format. Something they obviously call "c4soap". Basicly a twoway xml soap-ish protocol. So, when you get information, or when you configure something with the composer, it will toss a chunk of xml to the director, and then it will reply if the data was ok, etc. :)
 
+[http://control4toolkit.googlecode.com/svn/trunk/drafts/director-information-dump.txt Director2Composer c4soap-dump example]
