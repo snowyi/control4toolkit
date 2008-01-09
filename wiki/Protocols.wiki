@@ -1,0 +1,61 @@
+#summary The protocol specifications
+#labels Phase-Implementation
+
+= Introduction =
+
+To this page I will try to add everything I understand how works in the control4 communication protocols. If you have something to contribute with, don't hesitate to drop me a line or two by mail or something :)
+
+= c4soap =
+
+== GetVersionInfo ==
+When the director have found a device to connect to, it uses the xml-rpc-soap'ish interface "c4soap".
+
+*All commands are ended with one \x00 character.*
+
+The first thing the client says when it connects are 
+{{{
+<c4soap name="GetVersionInfo" async="False" />
+}}}
+
+Director will then respond to the GetVersionInfo command with something like
+{{{
+<c4soap name="GetVersionInfo" result="1">
+  <versions>
+    <version name="Director" version="1.3.2.318" buildtype="" builddate="Nov 13 2007" buildtime="17:45:35"/>
+    <version name="MediaManager" version="1.3.2.318" buildtype="" builddate="Nov 13 2007" buildtime="17:58:55"/>
+  </versions>
+</c4soap>
+}}}
+
+Okay. Next step, pretty important
+
+== EnableEvents ==
+
+In the connection period, the composer also send this to the director
+{{{
+<c4soap name="EnableEvents" async="True">
+  <param name="enable" type="bool">1</param>
+</c4soap>
+}}}
+Which enables events to the composer, so, when stuff happens on the director, it will inform composer. Well, you get it. Events are events. And they are here enabled.
+
+
+
+== GetItems ==
+This will dump everything on the entire director. Pretty neat to get an overview :)
+{{{
+<c4soap name="GetItems" async="False">
+  <param name="filter" type="number">0</param>
+</c4soap>
+}}}
+
+== GetBindingsByDevice ==
+
+== GetMediaByDevice ==
+Returns what media you have. You can ask for playlists etc. Later.
+
+== GetNetworkBindings ==
+This is very neat! You'll get information about all your dimmers etc, what MAC addresses, types etc they are, and what internal deviceid they are.
+
+== GetPhysicalDevices ==
+Extensive information of the one above. More devices etc. You'll pretty much get everything from above here as well i think.
