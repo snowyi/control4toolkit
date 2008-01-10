@@ -1,0 +1,59 @@
+#!/usr/bin/perl -I..
+
+use warnings;
+use strict;
+use IO::Socket;
+use IO::Select;
+use Socket;
+use C4Toolkit;
+
+my $id = C4Toolkit::DeviceID();
+my $pid = 0;
+
+if ($pid = fork()) {
+    exit;
+}
+
+$0 = "discoverd";
+
+my $MSG = "NOTIFY * HTTP/1.1\r\nNTS: ssdp:alive\r\nST: c4:control4_speakerpoint\r\nUSN: c4:control4_speakerpoint-".$id."\r\nExt:KeepAlive\r\nCache-Control: no-cache=\"Ext\", max-age = 5000\r\n\r\n";
+
+my $Server = IO::Socket::INET->new(
+	Proto    => 'udp',
+	LocalPort => 1900
+) or die (
+	"socket: $@"
+);
+
+my $select = IO::Select->new(); 
+$select->add($Server);
+
+my @controllers;
+
+while(1) {
+	my $shandle = IO::Socket::INET->new(
+		Proto => 'udp',
+		PeerAddr => '239.255.255.250:1900',
+	) or die("$!"); 
+	
+	$shandle->send($MSG) == length($MSG) or die "Cannot send discovery: $!";
+	$shandle->close();
+
+	while ($select->can_read(60)) {
+		my $datagram = '';
+
+		if ($Server->recv($datagram, 255)) {
+			
+			print $datagram; 
+			my $handle = IO::Socket::INET->new(
+				Proto    => 'udp',
+				PeerAddr => $Server->peerhost().":1900",
+			) or die ("socket: $@");
+		
+			if ($handle->send($MSG) != length($MSG)) { print "Oops. Couldn't send discovery packet: $@\n"; exit(0); }
+	
+			$handle->close();
+	
+		}
+	}
+}
