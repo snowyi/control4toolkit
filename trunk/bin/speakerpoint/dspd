@@ -15,38 +15,56 @@ my $Listen = new IO::Socket::INET(
         LocalPort => 6000,
         Reuse => 1
 );
-my $Stream = new IO::Socket::INET(
-        Listen => 1,
-        LocalPort => 6000,
-        Reuse => 1
+my $Control = new IO::Socket::INET(
+	Proto => 'udp',
+        LocalPort => 6001,
+);
+my $Audio = new IO::Socket::INET(
+	Proto => 'udp',
+        LocalPort => 6200,
 );
 
-
+open(DSP,">/tmp/soundfile");
+binmode(DSP);
+binmode($Audio);
 my %Channels = ();
 
-our $Select = new IO::Select($Listen);
-our $Select = new IO::Select($Stream);
-print "1\n";
+our $Select = new IO::Select;
+
+$Select->add($Listen);
+$Select->add($Control);
+$Select->add($Audio);
+
 my %c = ();
 
-open_channel("/dev/dsp",6001);
-
 while(1) {
+
 print "loop\n";
-while(my @ready = $Select->can_read(1)) {
-        print "2\n";
+
+while(my @ready = $Select->can_read(2)) {
         foreach my $Handle (@ready) {
 
-            print "3\n";
             if ($Handle == $Listen) {
 		print "TCP INCOMING 6000\n";
                 my $new = $Listen->accept;
                 $Select->add($new);
-                $c{$Handle}{'tcp'}++;
+            } 
+	    elsif ($Handle == $Audio) {
 
-            } else {
+		my $Command = "";
+	        my $sock_addr = recv( $Handle, $Command, 2048, 0 );
 
-		if (not defined $c{$Handle}{'stream'}) {
+		if (length($Command) != 9) {
+			print "SND\n";		
+			print DSP $Command;
+		} else {
+			print "CTRL\n";		
+		}
+
+	    }
+	
+	    else {
+
 			my $Command = "";
 		        my $sock_addr = recv( $Handle, $Command, 1024, 0 );
 	
@@ -88,10 +106,6 @@ while(my @ready = $Select->can_read(1)) {
 
                         }
 
-                } else {
-			print "Stream packet\n";
-		}
-
 
             }
         }
@@ -110,28 +124,5 @@ sub se {
         print $fh $pkg."\r\n";
         return 1;
 }
-sub socket_close {
-        my $fh = shift;
-        $Select->remove($fh);
-        $fh->close();
-}
 
-
-sub open_channel {
-	my $dsp = shift;
-	my $port = shift;
-	my $Handle = IO::Socket::INET->new(LocalPort => $port, Proto => 'udp') or die "socket: $@";
-	$c{$Handle}{'port'} = $port;
-	my $DSPHandle;
-
-	open($DSPHandle,">".$dsp) or die("dsp: $! @!");
-
-	$c{$Handle}{'dsp'} = $DSPHandle;
-	$Select->add($Handle);
-
-}
-sub close_channel {
-	my $Handle = shift;
-	close($c{$Handle}{'dsp'});
-}
 
