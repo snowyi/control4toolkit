@@ -8,6 +8,9 @@ use strict;
 use IO::Socket;
 use IO::Select;
 
+my $DEVICEID = `cat /etc/deviceid`;
+chomp $DEVICEID;
+
 my $handle = IO::Socket::INET->new(
 	Proto    => 'udp',
 	PeerAddr => '239.255.255.250:1900',

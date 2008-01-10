@@ -1,0 +1,214 @@
+JEY!
+
+
+Director connects to tcp speakerpoint:5100
+
+Asks
+> 0i0001 c4.sp.d2get volume
+
+Gets response< 0r0001 c4.sp.d2get volume 32
+
+..and so on
+
+> 0i0002 c4.sp.d2get localamp
+< 0r0002 c4.sp.d2get localamp off
+
+> 0i0003 c4.sp.d2get mute
+< 0r0003 c4.sp.d2get mute off
+
+> 0i0004 c4.sp.d2get treble
+< 0r0004 c4.sp.d2get treble 0e
+
+> 0i0005 c4.sp.d2get bass
+< 0r0005 c4.sp.d2get bass 0e
+
+> 0i0006 c4.sp.d2get balance
+< 0r0006 c4.sp.d2get balance center 00
+
+> 0i0007 c4.sp.spping
+< 0r0007 c4.sp.spping  
+
+> 0i0008 c4.sp.spping
+< 0r0008 c4.sp.spping  
+
+> 0i0009 c4.sp.spping
+< 0r0009 c4.sp.spping  
+
+> 0i000a c4.sp.spping
+< 0r000a c4.sp.spping  
+
+> 0i000b c4.sp.spping
+< 0r000b c4.sp.spping  
+
+
+
+
+-------------------
+
+Speakerpoints syslogs to director :) on the syslog-port. Only running a ordinary unix syslog daemon.
+
+-------------------
+
+
+Director requests a samba-session from the speakerpoint
+
+It does a setup with user CONTROL4\guest
+
+Asks for \\<speakerpoint\MEDIA
+
+goes into the \usb folder, and then it probably finds stuff from the usb-share if the speakerpoint has a harddrive :)
+
+
+----
+
+Director says:
+
+NOTIFY * HTTP/1.1\r\n
+NTS: ssdp:alive\r\n
+ST: c4:control4_htc\r\n
+USN: c4:control4_htc-ht-controller-000FFF0318DB\r\n
+Ext:KeepAlive\r\n
+Cache-Control: no-cache="Ext", max-age = 5000\r\n
+\r\n
+
+
+Director says:
+
+NOTIFY * HTTP/1.1\r\n
+HOST:239.255.255.250:1900\r\n
+NTS: ssdp:alive\r\n
+ST: c4:director\r\n
+USN: c4:director:ht-controller-000FFF0318DB\r\n
+Ext:KeepAlive\r\n
+Cache-Control: no-cache="Ext", max-age = 5000\r\n
+\r\n
+
+Speakerpoint says:
+
+NOTIFY * HTTP/1.1\r\n
+NTS: ssdp:alive\r\n
+ST: c4:control4_speakerpoint\r\n
+USN: c4:control4_speakerpoint-speaker-point-000FFF033509\r\n
+Ext:KeepAlive\r\n
+Cache-Control: no-cache="Ext", max-age = 5000\r\n
+\r\n
+
+
+
+
+---------------------
+
+i THINK director connects to speakerpoint at port 5111 saying:
+
+> <getstatus/>
+
+Replying with
+< <status><value>idle</value><currentversion>1.3.2.318</currentversion></status>
+.. And after 60 idle seconds or so, director asks
+
+> <ping/>
+
+and the speakerpoints replies with
+< <status><value>idle</value><currentversion>1.3.2.318</currentversion></status>
+
+
+---------------------------
+
+Later on we look at the netusbserver. prolly dont need this. =)
+
+0i0001 c4.nu.usbgetstate0r0001 c4.nu.usbgetstate Empty0i0002 c4.nu.usbgetstate0r0002 c4.nu.usbgetstate Empty0i0003 c4.nu.nuping0r0003 c4.nu.nuping "netusbserver Version: 1.3.2.318 ping response"0i0004 c4.nu.nuping0r0004 c4.nu.nuping "netusbserver Version: 1.3.2.318 ping response"0i0005 c4.nu.nuping0r0005 c4.nu.nuping "netusbserver Version: 1.3.2.318 ping response"0i0006 c4.nu.nuping0r0006 c4.nu.nuping "netusbserver Version: 1.3.2.318 ping response"0i0007 c4.nu.nuping0r0007 c4.nu.nuping "netusbserver Version: 1.3.2.318 ping response"0i0008 c4.nu.nuping0r0008 c4.nu.nuping "netusbserver Version: 1.3.2.318 ping response"0i0009 c4.nu.nuping0r0009 c4.nu.nuping "netusbserver Version: 1.3.2.318 ping response"0i000a c4.nu.nuping0r000a c4.nu.nuping "netusbserver Version: 1.3.2.318 ping response"0i000b c4.nu.nuping0r000b c4.nu.nuping "netusbserver Version: 1.3.2.318 ping response"
+Didnt have anything in my usb-thingy. But something will probably show up here then.
+
+
+---------------------------
+
+now for the audioplaying part
+
+director connects to speakerpoints tcp:6000, an says:
+
+> 0 reset
+
+and then gets reply 
+< 0 OK reset
+from the speakerpoint. This probably means that the audio should be reset, and be ready for new playback!
+
+
+------------------------------
+
+UDP!!
+
+Director says to speakerpoint udp:6001 (from source port 1056 (random?)):
+
+> 0 getvol 6200
+
+speakerpoint replies to source port:
+
+0020                                 30 20 67 65 74 76            0 getv
+0030   6f 6c 20 36 32 30 30 20 31 30 30 20 31 30 30 0d  ol 6200 100 100.
+0040   0a 30 20 4f 4b 20 67 65 74 76 6f 6c 0d 0a        .0 OK getvol..
+
+Well, idunno. I'm tired of thinking.
+
+
+-----
+
+oy! new packet later on back and forth for the 6001 port on the speakerpoint
+
+> 1 setmut 6200 off\r\n
+< 1 OK setmut\r\n
+
+now almost same second we get
+
+> 79 addch 6200 /dev/dsp0\r\n
+< 79 addch Port or device already open\r\n79 NO addch 6200\r\n
+
+> 2 getmut 6200\r\n
+< 2 getmut 6200 OFF\r\n2 OK getmut
+
+FUNNY PART!!
+
+Now we're beginning to talk to the opened port we got
+
+> SYNC     <- five \x20 after sync! no feeds.
+< SYNC     <- five \x20 after sync-reply! no feeds here either.
+
+> MASTER   <- three. Makes this field 9 bytes always :)
+and here we got a
+< MASTER   <- relpy as well :)
+
+Ok! Now the director sends
+
+> [638 bytes of something. DSP stream?]
+and sp replies:
+
+< 000000001<- the serial of the packet recieved :)
+> [639 bytes ..]
+< 000000001
+> [639 bytes ..]
+< 000000002
+.....and so on :)
+< 000003045
+> SYNC     <- five \x20 after sync! no feeds.
+< SYNC     <- five \x20 after sync-reply! no feeds here either.
+
+the control channel (port udp6001)
+
+> 95 addch 6200 /dev/dsp0\r\n
+< 95 addch Port or device already open\r\n79 NO addch 6200\r\n
+
+> 5 setmut 6200 off\r\n
+< 5 OK setmut\r\n
+> 6 getmut 6200\r\n
+< 6 getmut 6200 OFF\r\n2 OK getmut
+> 7 setmut 6200 off\r\n
+< 7 OK setmut\r\n
+..in the middle of everything.. :)
+
+> 8 getmut 6200\r\n
+< 8 getmut 6200 OFF\r\n2 OK getmut
+
+i dont know, but the first digit seems like a serial to identify the current command up agains the reply or something, but
+hmm.. i seem to have missed something :P
+
+
+

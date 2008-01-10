@@ -29,7 +29,7 @@ my $r;
 #$r = SendCommand("EnableEvents",1, enable => [ "bool", 1 ] );
 $r = SendCommand("GetItems",0,     filter => [ "number", 0 ] );
 
-#print Dump("",$r->{c4soap}->{systemitems}->{item});
+print Dump("",$r->{c4soap}->{systemitems}->{item});
 
 
 
@@ -95,10 +95,10 @@ sub SendCommand {
 		my $doc = $xml->parse_string( $Reply );
 		my $xpc = XML::LibXML::XPathContext->new($doc);
 
-		use Data::Dumper;
-		for my $element ($xpc->find('//name')->get_nodelist()) {
-			print Dumper $element;
-		}
+		#use Data::Dumper;
+		#for my $element ($xpc->find('//name')->get_nodelist()) {
+		#	print Dumper $element;
+		#}
 
 
 	}
