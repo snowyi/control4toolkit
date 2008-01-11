@@ -51,6 +51,8 @@ $0 = "discoverd";
 # Fetch our device id from our toolkit.
 my $id = C4Toolkit::DeviceID();
 
+dbg("Opening TCP Control port");
+
 # TCP Control port
 my $Listen = new IO::Socket::INET(
         Listen    => 1,
@@ -58,11 +60,24 @@ my $Listen = new IO::Socket::INET(
         Reuse     => 1
 );
 
+dbg("Opening TCP Interface port");
+
+# TCP OTHER Control port
+my $Interface = new IO::Socket::INET(
+        Listen    => 1,
+        LocalPort => 5100,
+        Reuse     => 1
+);
+
+dbg("Opening UDP Control port");
+
 # UDP Control port
 my $Control = new IO::Socket::INET(
 	Proto     => 'udp',
         LocalPort => 6001,
 );
+
+dbg("Opening UDP Streaming Port");
 
 # Streaming audio port
 my $Audio = new IO::Socket::INET(
@@ -71,10 +86,12 @@ my $Audio = new IO::Socket::INET(
 );
 
 # I dunno if this works, but I feel it right!;D
+dbg("Setting binmode to Audio-streaming port");
 binmode($Audio);
 
+dbg("Enabling autoflush");
 # Autoflush when we write! :)
-$|=1;
+$| = 1;
 
 # Predifine some global variables
 my @mutevolume = (0,0);
@@ -82,12 +99,16 @@ my $mute       = 0;
 
 our $Select = new IO::Select;
 
+dbg("Adding handles to IO::Select");
 # Add our sockets to the IO::Select
 $Select->add($Listen);
 $Select->add($Control);
+$Select->add($Interface);
 $Select->add($Audio);
 
 dbg("Entering mainloop");
+
+my %Type = ();
 
 while(1) {
 
@@ -98,10 +119,62 @@ while(1) {
 			if ($Handle == $Listen) {
 				my $new = $Listen->accept;
 				$Select->add($new);
-				dbg("Got a new TCP connection!");
+				$Type{$new} = 'control';
+				dbg("Got a new TCP (control) connection!");
+			}
+ 			elsif ($Handle == $Interface) {
+				my $new = $Interface->accept;
+				$Select->add($new);
+				$Type{$new} = 'interface';
+				dbg("Got a new TCP (interface) connection!");
 			} 
-			elsif ($Handle == $Audio) {
+			elsif ($Type{$Handle} eq 'interface') {
+				while(<$Handle>) {
+					if (/^(\d+)i(\d+) ([^ ]+)( (.+))([\r\n]+)?/gis) {
+						my $rserial = "$1r$2 ";
+						my $cmd = $3;
+						my $arg = $5;
+						my $feed = $6;
 
+						if ($cmd eq 'c4.sp.spping') {
+							print $Handle $rserial.$cmd.$feed;
+						}
+						elsif ($cmd eq 'c4.sp.d2get' && defined $arg) {
+							if ($arg eq 'localamp') {
+								print $Handle $rserial.$cmd." localamp off".$feed;
+							}
+							elsif ($arg eq 'mute') {
+								print $Handle $rserial
+									.$cmd
+									." mute "
+									. (
+										$mute ? 
+										'on' : 'off'
+									)
+									.$feed;
+							}
+							elsif ($arg eq 'treble') {	
+								#my @treble = Audio::Mixer::get_cval('treble');
+								print $Handle $rserial.$cmd." treble 0e".$feed;
+							}
+							elsif ($arg eq 'bass') {
+								#my @bass = Audio::Mixer::get_cval('bass');
+								print $Handle $rserial.$cmd." bass 0e".$feed;
+							}
+							elsif ($arg eq 'balance') {
+								print $Handle $rserial.$cmd." balance center 00".$feed;
+							}
+							else {
+								die("Error getting $cmd $arg\n");
+							}
+						}
+						else {
+							die("Error getting $cmd");
+						}
+					}
+				}	
+			}
+			elsif ($Handle == $Audio) {
 				my $Command;
 				my $Address = recv( $Handle, $Command, 2048, 0 );
 
@@ -196,6 +269,7 @@ while(1) {
 		}
 	}
 }
+
 sub se {
         my $fh = shift;
         my $pkg = shift;
