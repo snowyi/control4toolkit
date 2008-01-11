@@ -4,26 +4,64 @@ use warnings;
 use strict;
 use IO::Socket;
 use IO::Select;
-use Socket;
+use Data::Dumper;
 use C4Toolkit;
+use Getopt::Std;
+use Time::HiRes qw(time);
 
-my $pid = 0;
+my %Options;
+getopt('h?dvSAn', \%Options);
 
-if ($pid = fork()) {
-    exit;
+my $StartTime = time();
+dbg("Starting");
+if (exists $Options{'h'} && exists $Options{'v'}) {
+	err("Please dont use verbose and daemonize in the same setting?");
 }
 
+if (exists $Options{'h'} || exists $Options{'?'}) {
+	print 'Discoverd v0.1
+
+Usage
+	discoverd [options]
+
+Options available
+
+	-d	Daemonize
+	-v	Verbose/Debug
+	-h	Show this help
+	-n	IP to enable Director notifications
+	-w	Wait seconds until next notification
+
+	-S	Skip speakerpoint notification
+	-A	Skip audioserver notification
+
+Exiting.
+';
+	exit(1);
+}
+
+# Fork if we are supposed to
+
+if (exists $Options{'d'}) {
+	print "Daemonizing discoverd..\n";
+	exit if fork;
+}
+
+# Change our process name to something pretty
 $0 = "discoverd";
+
+# Fetch our device id from our toolkit.
 my $id = C4Toolkit::DeviceID();
 
+# Our payloads to send out as notifications
 my %payloads = (
 	'speakerpoint' => [
-		"NOTIFY * HTTP/1.1",
-		"NTS: ssdp:alive",
-		"ST: c4:control4_speakerpoint",
-		"USN: c4:control4_speakerpoint-".$id,
-		"Ext:KeepAlive",
-		'Cache-Control: no-cache="Ext", max-age = 5000'
+			"NOTIFY * HTTP/1.1",
+			"NTS: ssdp:alive",
+			"ST: c4:control4_speakerpoint",
+			"USN: c4:control4_speakerpoint-".$id,
+			"Ext:KeepAlive",
+			'Cache-Control: no-cache="Ext", max-age = 5000'
 	],
 	'audioserver' => [
 		"NOTIFY * HTTP/1.1",
@@ -35,35 +73,48 @@ my %payloads = (
 	]
 );
 
-my $Server = IO::Socket::INET->new(
-	Proto    => 'udp',
-	LocalPort => 1900
-) or die (
-	"socket: $@"
-);
-
 my $select = IO::Select->new(); 
-$select->add($Server);
 
-my @controllers;
+# ..empty select
 
 while(1) {
 
-	udp_send( "10.0.0.5:1032",        pkg('audioserver') );
-	udp_send( "10.0.0.5:1032",        pkg('speakerpoint'));
-	udp_send( "239.255.255.250:1900", pkg('speakerpoint'));
+	dbg("Cycling our forever-going loop");
+	# If we have specified a notifcation ip for director
 
-	sleep(60);
+	if (defined $Options{'n'}) {
+		udp_send( $Options{'n'}.":1032", pkg('audioserver') ) unless exists $Options{'A'};
+		udp_send( $Options{'n'}.":1032", pkg('speakerpoint') ) unless exists $Options{'S'};
+	}
+
+	# Just broadcast the speakerpoint notifications
+
+	udp_send( "239.255.255.250:1900",  pkg('speakerpoint')) unless exists $Options{'S'};
+
+	# Wait until next notification
+	sleep(defined $Options{'w'} && int($Options{'w'}) ? int($Options{'d'}) : 60);
+
 }
 
 sub pkg {
 	my $service = shift;
 	return join("\r\n",@{$payloads{$service}})."\r\n\r\n";
 }
-
+sub dbg {
+	my $Message = shift;
+	if (exists $Options{'v'}) {
+		printf(
+			"[%9.3f]: %s\n",
+			time() - $StartTime,
+			$Message
+		);
+	}
+}
 sub udp_send {
 
 	my ($destination, $message) = @_;
+
+	dbg("Sending UDP packet / ".length($message)." bytes to destination $destination");
 
 	my $h = IO::Socket::INET->new(
 		Proto => 'udp',
