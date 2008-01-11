@@ -6,127 +6,212 @@ use Data::Dumper;
 use IO::Socket;
 use IO::Select;
 use C4Toolkit;
+use Getopt::Std;
+use Time::HiRes qw(time);
+use Audio::Mixer;
 
-# Fetch device id
-my $DEVICEID = C4Toolkit::DeviceID();
+my %Options;
+getopt('h?dv', \%Options);
 
+my $StartTime = time();
+
+dbg("Starting");
+
+if (exists $Options{'h'} && exists $Options{'v'}) {
+	err("Please dont use verbose and daemonize in the same setting?");
+}
+
+if (exists $Options{'h'} || exists $Options{'?'}) {
+	print 'DSPd v0.1
+
+Usage
+	dspd [options]
+
+Options available
+
+	-d	Daemonize
+	-v	Verbose/Debug
+	-h	Show this help
+
+Exiting.
+';
+	exit(1);
+}
+
+# Fork if we are supposed to
+
+if (exists $Options{'d'}) {
+	print "Daemonizing discoverd..\n";
+	exit if fork;
+}
+
+# Change our process name to something pretty
+$0 = "discoverd";
+
+# Fetch our device id from our toolkit.
+my $id = C4Toolkit::DeviceID();
+
+# TCP Control port
 my $Listen = new IO::Socket::INET(
-        Listen => 1,
+        Listen    => 1,
         LocalPort => 6000,
-        Reuse => 1
+        Reuse     => 1
 );
+
+# UDP Control port
 my $Control = new IO::Socket::INET(
-	Proto => 'udp',
+	Proto     => 'udp',
         LocalPort => 6001,
 );
+
+# Streaming audio port
 my $Audio = new IO::Socket::INET(
-	Proto => 'udp',
+	Proto     => 'udp',
         LocalPort => 6200,
 );
 
-open(DSP,">/tmp/soundfile");
-
-$|=1;
-
-binmode(DSP);
+# I dunno if this works, but I feel it right!;D
 binmode($Audio);
 
-my %Channels = ();
+# Autoflush when we write! :)
+$|=1;
+
+# Predifine some global variables
+my @mutevolume = (0,0);
+my $mute       = 0;
 
 our $Select = new IO::Select;
 
+# Add our sockets to the IO::Select
 $Select->add($Listen);
 $Select->add($Control);
 $Select->add($Audio);
 
-my %c = ();
+dbg("Entering mainloop");
 
 while(1) {
 
-print "loop\n";
+	while(my @ready = $Select->can_read(60)) {
 
-while(my @ready = $Select->can_read(2)) {
-        foreach my $Handle (@ready) {
+		foreach my $Handle (@ready) {
 
-            if ($Handle == $Listen) {
-		print "TCP INCOMING 6000\n";
-                my $new = $Listen->accept;
-                $Select->add($new);
-            } 
-	    elsif ($Handle == $Audio) {
+			if ($Handle == $Listen) {
+				my $new = $Listen->accept;
+				$Select->add($new);
+				dbg("Got a new TCP connection!");
+			} 
+			elsif ($Handle == $Audio) {
 
-		my $Command = "";
-	        my $sock_addr = recv( $Handle, $Command, 2048, 0 );
+				my $Command;
+				my $Address = recv( $Handle, $Command, 2048, 0 );
 
-		if (length($Command) != 9) {
-			print "SND\n";		
-			print DSP $Command;
-		} else {
-			print "CTRL\n";		
+				if (length($Command) == 9) {
+					dbg("Got a nine-byte / control packet: ".$Command);
+				} else {
+					print "#";
+				}
+
+			}
+
+			else {
+
+				my $Command = "";
+				my $sock_addr = recv( $Handle, $Command, 1024, 0 );
+
+				$Command =~ s/[\n\r]//sgi;
+
+				if ($Command =~ /^(\d+) (.+)/) {
+
+					my $serial = $1;
+					my $cmd = $2;
+
+					dbg("Got command $Command");
+
+					if ($cmd =~ /reset/i) {
+						dbg("Reseting");
+						se($Handle, "$serial OK reset");
+					}
+
+					elsif ($cmd =~ /^setmut (\d+) (off|on)/i) {
+						se($Handle, "$serial OK SETMUT");
+
+						if (lc($2) eq 'on' && not $mute) {
+							dbg("Muting audio");
+							@mutevolume = Audio::Mixer::get_cval('vol');
+							$mute = 1;
+							Audio::Mixer::set_cval('vol',0,0);
+						}
+						elsif (lc($2) eq 'off' && $mute) {
+							dbg("Unmuting audio");
+							Audio::Mixer::set_cval('vol',@mutevolume);
+							$mute = 0;
+						}
+
+						else {
+							die("UNKNOWN: $Command");
+						}
+
+					}
+
+					elsif ($cmd =~ /^getmut (\d+)/i) {
+						if ($mute) {
+							dbg("Sending mute status on");
+							se($Handle, "$serial getmut ON\r\n$serial OK getmut");
+						} else {
+							dbg("Sending mute status off");
+							se($Handle, "$serial getmut OFF\r\n$serial OK getmut");
+						}
+					}
+
+					elsif ($cmd =~ /^getvol (\d+)/i) {
+						if ($mute) {
+							dbg("Sending volume status (muted)");
+							se($Handle, 
+								"$serial getvol $1 "
+								.join(' ',@mutevolume)
+								."\r\n$serial OK getvol"
+							);
+						} else {
+							dbg("Sending volume status");
+							se($Handle,
+								"$serial getvol $1 "
+								.join(' ',Audio::Mixer::get_cval('vol'))
+								."\r\n$serial OK getvol"
+							);
+						}
+					}
+
+					elsif ($cmd =~ /^addch (\d+) ([^ ]+)/i) {
+						dbg("Adding Channel (lol)");
+						se($Handle, 
+							"$serial addch Port or device already open\r\n"
+							."$serial NO addch 6200\r\n"
+						);
+					}
+
+				}
+
+
+			}
 		}
-
-	    }
-	
-	    else {
-
-			my $Command = "";
-		        my $sock_addr = recv( $Handle, $Command, 1024, 0 );
-	
-                        $Command =~ s/[\n\r]//sgi;
-	
-                        if ($Command =~ /^(\d+) (.+)/) {
-
-				my $serial = $1;
-				my $cmd = $2;
-
-	print "IN###################\n";
-	print Dumper \$c{$Handle};
-	print "------------\n";	
-	print "$Command\n";
-	print "------------\n\n";
-
-
-                                if ($cmd =~ /reset/i) {
-					print "Bah\n";
-                                        se($Handle, "$serial OK reset");
-                                }
-
-				elsif ($cmd =~ /^setmut /i) {
-	                                se($Handle, "$serial OK SETMUT");
-				}
-
-				elsif ($cmd =~ /^getmut (\d+)/i) {
-	                                se($Handle, "$serial getmut OFF\r\n$serial OK getmut");
-				}
-
-				elsif ($cmd =~ /^getvol (\d+)/i) {
-	                                se($Handle, "$serial getvol $1 100 100\r\n$serial OK getvol");
-				}
-
-				elsif ($cmd =~ /^addch (\d+) ([^ ]+)/i) {
-	                                se($Handle, "$serial addch Port or device already open\r\n$serial NO addch 6200\r\n");
-					
-				}
-
-                        }
-
-
-            }
-        }
-}
+	}
 }
 sub se {
         my $fh = shift;
         my $pkg = shift;
-	
-	print "OUT##################\n";
-	print Dumper \$c{$fh};
-	print "------------\n";	
-	print "$pkg\n";
-	print "------------\n\n";
-
+	dbg("UDP-OUT: $pkg");
         print $fh $pkg."\r\n";
         return 1;
 }
 
+sub dbg {
+	my $Message = shift;
+	if (exists $Options{'v'}) {
+		printf(
+			"[%9.3f]: %s\n",
+			time() - $StartTime,
+			$Message
+		);
+	}
+}
 
