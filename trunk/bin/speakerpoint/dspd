@@ -25,8 +25,12 @@ my $Audio = new IO::Socket::INET(
 );
 
 open(DSP,">/tmp/soundfile");
+
+$|=1;
+
 binmode(DSP);
 binmode($Audio);
+
 my %Channels = ();
 
 our $Select = new IO::Select;
