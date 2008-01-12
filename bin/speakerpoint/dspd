@@ -46,7 +46,7 @@ if (exists $Options{'d'}) {
 }
 
 # Change our process name to something pretty
-$0 = "discoverd";
+$0 = "dspd";
 
 # Fetch our device id from our toolkit.
 my $id = C4Toolkit::DeviceID();
@@ -84,6 +84,12 @@ my $Audio = new IO::Socket::INET(
 	Proto     => 'udp',
         LocalPort => 6200,
 );
+
+open(DSP,"|mpg123 -b 128 -");
+DSP->autoflush(1);
+
+my $bufferSize = 8;
+my @buffer = ();
 
 # I dunno if this works, but I feel it right!;D
 dbg("Setting binmode to Audio-streaming port");
@@ -130,58 +136,112 @@ while(1) {
 			} 
 			elsif ($Type{$Handle} eq 'interface') {
 				while(<$Handle>) {
-					if (/^(\d+)i(\d+) ([^ ]+)( (.+))([\r\n]+)?/gis) {
+					s/[\n\r]//sgi;
+					if (/^([a-f0-9]+)i([a-f0-9]+) (.+)/) {
+						
 						my $rserial = "$1r$2 ";
-						my $cmd = $3;
-						my $arg = $5;
-						my $feed = $6;
+						my @args = split(/ /,$3);
+						my $cmd = shift(@args);
+						my $arg = join " ", @args;
+						my $feed = "\r\n";
+
+						dbg(" IN: '$cmd' '$arg'");						
 
 						if ($cmd eq 'c4.sp.spping') {
-							print $Handle $rserial.$cmd.$feed;
+							se($Handle, $rserial.$cmd.$feed);
+						}
+						elsif ($cmd eq 'c4.sp.d2' && defined $arg) {
+							if ($args[0] eq 'mute') {
+								if ($args[1] eq 'toggle') {
+									if ($mute) {
+										mute_off();
+									} else {
+										mute_on();
+									}
+								}
+								elsif ($args[1] eq 'on') {
+									mute_on();
+								}
+								elsif ($args[1] eq 'off') {
+									mute_off();
+								}
+							}
+							elsif ($args[0] eq 'volume') {
+								if ($args[1] eq 'setlevel') {
+									Audio::Mixer::set_cval('vol',hex($args[2]),hex($args[2]));
+									se($Handle, $rserial.$cmd." ".$arg.$feed);
+								}
+								
+							} else {
+								dbg("--UNDEFINED--: $cmd $arg");
+								se($Handle, $rserial.$cmd." ".$arg.$feed);
+							}
 						}
 						elsif ($cmd eq 'c4.sp.d2get' && defined $arg) {
 							if ($arg eq 'localamp') {
-								print $Handle $rserial.$cmd." localamp off".$feed;
+								se($Handle, $rserial.$cmd." localamp off".$feed);
 							}
 							elsif ($arg eq 'mute') {
-								print $Handle $rserial
+							
+								se($Handle,$rserial
 									.$cmd
 									." mute "
 									. (
 										$mute ? 
 										'on' : 'off'
 									)
-									.$feed;
+									.$feed
+								);
 							}
 							elsif ($arg eq 'treble') {	
 								#my @treble = Audio::Mixer::get_cval('treble');
-								print $Handle $rserial.$cmd." treble 0e".$feed;
+								se($Handle,$rserial.$cmd." treble 0e".$feed);
 							}
 							elsif ($arg eq 'bass') {
 								#my @bass = Audio::Mixer::get_cval('bass');
-								print $Handle $rserial.$cmd." bass 0e".$feed;
+								se($Handle, $rserial.$cmd." bass 0e".$feed);
 							}
 							elsif ($arg eq 'balance') {
-								print $Handle $rserial.$cmd." balance center 00".$feed;
+								se($Handle, $rserial.$cmd." balance center 00".$feed);
+							}
+							elsif ($arg eq 'volume') {	
+								my @vol = Audio::Mixer::get_cval('vol');
+								se($Handle, $rserial.$cmd." volume ".sprintf("%2X",$vol[0]).$feed);
 							}
 							else {
-								die("Error getting $cmd $arg\n");
+								die("Error3 getting $cmd $arg\n");
 							}
 						}
 						else {
-							die("Error getting $cmd");
+							die("Error2 getting $cmd");
 						}
 					}
 				}	
 			}
 			elsif ($Handle == $Audio) {
 				my $Command;
+
 				my $Address = recv( $Handle, $Command, 2048, 0 );
+					
 
 				if (length($Command) == 9) {
 					dbg("Got a nine-byte / control packet: ".$Command);
+					$Handle->send($Command);
 				} else {
-					print "#";
+					my $Song = substr($Command,12);
+					if (ord(substr($Song,0,1)) == 255 && ord(substr($Song,1,1)) == 251) {
+						push @buffer, $Song;
+
+						if (@buffer >= $bufferSize) {
+							for (@buffer) {
+								print DSP $_;
+							}
+							@buffer = ();
+						}
+					} else {	
+						die("Ballalaika!");
+					}
+					dbg("Wrote ".length($Song)." bytes to file");
 				}
 
 			}
@@ -189,8 +249,7 @@ while(1) {
 			else {
 
 				my $Command = "";
-				my $sock_addr = recv( $Handle, $Command, 1024, 0 );
-
+				my $sock_addr = recv( $Handle, $Command, 1024, 0 ) or next();
 				$Command =~ s/[\n\r]//sgi;
 
 				if ($Command =~ /^(\d+) (.+)/) {
@@ -208,16 +267,11 @@ while(1) {
 					elsif ($cmd =~ /^setmut (\d+) (off|on)/i) {
 						se($Handle, "$serial OK SETMUT");
 
-						if (lc($2) eq 'on' && not $mute) {
-							dbg("Muting audio");
-							@mutevolume = Audio::Mixer::get_cval('vol');
-							$mute = 1;
-							Audio::Mixer::set_cval('vol',0,0);
+						if (lc($2) eq 'on') {
+							mute_on();
 						}
-						elsif (lc($2) eq 'off' && $mute) {
-							dbg("Unmuting audio");
-							Audio::Mixer::set_cval('vol',@mutevolume);
-							$mute = 0;
+						elsif (lc($2) eq 'off') {
+							mute_off();
 						}
 
 						else {
@@ -273,11 +327,19 @@ while(1) {
 sub se {
         my $fh = shift;
         my $pkg = shift;
-	dbg("UDP-OUT: $pkg");
+	my $dbg = $pkg;
+	$dbg =~ s/[\r\n]+//sg;
+	dbg("OUT: $pkg");
         print $fh $pkg."\r\n";
         return 1;
 }
+sub mute_on {
+	dbg("Muting audio");
+	@mutevolume = Audio::Mixer::get_cval('vol');
+	$mute = 1;
+	Audio::Mixer::set_cval('vol',0,0);
 
+}
 sub dbg {
 	my $Message = shift;
 	if (exists $Options{'v'}) {
@@ -288,4 +350,8 @@ sub dbg {
 		);
 	}
 }
-
+sub mute_off {
+	dbg("Unmuting audio");
+	Audio::Mixer::set_cval('vol',@mutevolume);
+	$mute = 0;
+}

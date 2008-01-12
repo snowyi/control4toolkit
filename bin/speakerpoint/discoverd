@@ -44,7 +44,7 @@ Exiting.
 
 if (exists $Options{'d'}) {
 	print "Daemonizing discoverd..\n";
-	exit if fork;
+	exit if fork();
 }
 
 # Change our process name to something pretty
