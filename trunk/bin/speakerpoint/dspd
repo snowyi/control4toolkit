@@ -9,6 +9,7 @@ use C4Toolkit;
 use Getopt::Std;
 use Time::HiRes qw(time);
 use Audio::Mixer;
+use Net::RTP::Packet;
 
 my %Options;
 getopt('h?dv', \%Options);
@@ -50,6 +51,7 @@ $0 = "dspd";
 
 # Fetch our device id from our toolkit.
 my $id = C4Toolkit::DeviceID();
+dbg("Our DeviceID is $id");
 
 dbg("Opening TCP Control port");
 
@@ -58,7 +60,7 @@ my $Listen = new IO::Socket::INET(
         Listen    => 1,
         LocalPort => 6000,
         Reuse     => 1
-);
+); # TODO: Error-control
 
 dbg("Opening TCP Interface port");
 
@@ -86,18 +88,16 @@ my $Audio = new IO::Socket::INET(
 );
 
 open(DSP,"|mpg123 -b 128 -");
+
+dbg("Enabling autoflush");
 DSP->autoflush(1);
 
 my $bufferSize = 8;
 my @buffer = ();
 
-# I dunno if this works, but I feel it right!;D
+# Only needed on non-posix platforms like windows
 dbg("Setting binmode to Audio-streaming port");
 binmode($Audio);
-
-dbg("Enabling autoflush");
-# Autoflush when we write! :)
-$| = 1;
 
 # Predifine some global variables
 my @mutevolume = (0,0);
@@ -219,29 +219,39 @@ while(1) {
 				}	
 			}
 			elsif ($Handle == $Audio) {
-				my $Command;
-
-				my $Address = recv( $Handle, $Command, 2048, 0 );
+				my $RTPFrame;
+				my $Address = recv( $Handle, $RTPFrame, 2048, 0 );
 					
 
-				if (length($Command) == 9) {
-					dbg("Got a nine-byte / control packet: ".$Command);
-					$Handle->send($Command);
+				if (length($RTPFrame) == 9) {
+					dbg("Got a nine-byte / control packet: ".$RTPFrame);
+					$Handle->send($RTPFrame) if $Handle->peeraddr(); # O_o
 				} else {
-					my $Song = substr($Command,12);
-					if (ord(substr($Song,0,1)) == 255 && ord(substr($Song,1,1)) == 251) {
-						push @buffer, $Song;
+					my $packet;
+					local $SIG{__WARN__} = sub {}; # Hide warnings
+					eval { $packet = new Net::RTP::Packet( $RTPFrame ); };
 
-						if (@buffer >= $bufferSize) {
-							for (@buffer) {
-								print DSP $_;
+					if (defined($packet) && $packet && $packet->timestamp()) {
+						dbg("Got a valid RTP packet, timestamp: " . $packet->timestamp() ) ;
+
+						if ($packet->payload_type() == 14) { # 14 == MPA
+							my $MPAFrame = $packet->payload();
+							if (ord(substr($MPAFrame,0,1)) == 255 && ord(substr($MPAFrame,1,1)) == 251) { # Is a valid MPEG Audio frame.
+								dbg("Received MPEG Audio frame");
+								push @buffer, $MPAFrame;
+
+								if (@buffer >= $bufferSize) {
+									for (0..$#buffer) {
+										print DSP shift(@buffer);
+									}
+								}
+								$Handle->send(sprintf("%09d", $packet->timestamp())) if $Handle->peeraddr(); # O_o
+							} else {	
+								dbg("Received UNKNOWN data");
 							}
-							@buffer = ();
 						}
-					} else {	
-						die("Ballalaika!");
 					}
-					dbg("Wrote ".length($Song)." bytes to file");
+					# if not MPEG Audio, discard packet
 				}
 
 			}
@@ -340,18 +350,21 @@ sub mute_on {
 	Audio::Mixer::set_cval('vol',0,0);
 
 }
-sub dbg {
-	my $Message = shift;
-	if (exists $Options{'v'}) {
-		printf(
-			"[%9.3f]: %s\n",
-			time() - $StartTime,
-			$Message
-		);
-	}
-}
 sub mute_off {
 	dbg("Unmuting audio");
 	Audio::Mixer::set_cval('vol',@mutevolume);
 	$mute = 0;
+}
+sub dbg {
+	my $Message = shift;
+	my ($pkg, $file, $line) = caller;
+	my (undef, undef, undef, $subroutine) = caller(1);
+	if (exists $Options{'v'}) {
+		printf(
+			"[%9.3f: % -20s]: %s\n",
+			time() - $StartTime,
+			defined($subroutine) ? $subroutine : $pkg,
+			$Message
+		);
+	}
 }
