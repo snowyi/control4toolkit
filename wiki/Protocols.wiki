@@ -76,6 +76,6 @@ Firstly the server sends two 9 bytes long ASCII commands, expecting the commands
 < "MASTER   "
 }}}
 
-After this, the server starts to transmit 639 bytes long packets containing a RTP wrapper and then raw MPEG/III data in the payload.
+After this, the server starts to transmit 639 bytes long packets containing a RTP wrapper and then raw MPEG/III data encapsulated in MPEG ADTS in the payload.
 
 For each RTP packet sent, the server expects a UDP packet containing the timestamp value, in a 9 byte long zero-prepended string. (%09d)
