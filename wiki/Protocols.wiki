@@ -59,3 +59,23 @@ This is very neat! You'll get information about all your dimmers etc, what MAC a
 
 == GetPhysicalDevices ==
 Extensive information of the one above. More devices etc. You'll pretty much get everything from above here as well i think.
+
+= C4 Speakerpoint Audio =
+
+The speakerpoint audio consists mainly of a RTP stream which only updates its sequence counter for each new song playes. But increments the timestamp value corresponding to the payloads mpeg frame number. The data is transfered over UDP to port 6200 of the receiving speakerpoint.
+
+Firstly the server sends two 9 bytes long ASCII commands, expecting the commands to be sent as-is in return. (no encapsulation here)
+
+{{{
+> "SYNC     "
+< "SYNC     "
+}}}
+
+{{{
+> "MASTER   "
+< "MASTER   "
+}}}
+
+After this, the server starts to transmit 639 bytes long packets containing a RTP wrapper and then raw MPEG/III data in the payload.
+
+For each RTP packet sent, the server expects a UDP packet containing the timestamp value, in a 9 byte long zero-prepended string. (%09d)
