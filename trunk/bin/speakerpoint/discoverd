@@ -1,4 +1,4 @@
-#!/usr/bin/perl -I..
+#!/usr/bin/perl -I../../lib
 
 use warnings;
 use strict;
@@ -12,8 +12,6 @@ use Time::HiRes qw(time);
 my %Options;
 getopt('h?dvSAn', \%Options);
 
-my $StartTime = time();
-dbg("Starting");
 if (exists $Options{'h'} && exists $Options{'v'}) {
 	err("Please dont use verbose and daemonize in the same setting?");
 }
@@ -39,6 +37,9 @@ Exiting.
 ';
 	exit(1);
 }
+
+$dbg = 1;
+dbg("Starting");
 
 # Fork if we are supposed to
 
@@ -99,16 +100,6 @@ while(1) {
 sub pkg {
 	my $service = shift;
 	return join("\r\n",@{$payloads{$service}})."\r\n\r\n";
-}
-sub dbg {
-	my $Message = shift;
-	if (exists $Options{'v'}) {
-		printf(
-			"[%9.3f]: %s\n",
-			time() - $StartTime,
-			$Message
-		);
-	}
 }
 sub udp_send {
 
