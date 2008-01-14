@@ -1,7 +1,7 @@
 package C4Toolkit;
 
 @ISA=qw(Exporter);
-@EXPORT = qw(dbg $dbg);
+@EXPORT = qw(se dbg $dbg);
 @EXPORT_OK = qw();
 use Exporter;
 use Time::HiRes qw(time);
@@ -23,6 +23,16 @@ sub dbg {
 			$Message
 		);
 	}
+}
+
+sub se {
+        my $fh = shift;
+        my $pkg = shift;
+	my $dbg = $pkg;
+	$dbg =~ s/[\r\n]+//sg;
+	dbg("OUT: $dbg");
+        print $fh $pkg."\r\n";
+        return 1;
 }
 
 # Retrieve DeviceID for this computer

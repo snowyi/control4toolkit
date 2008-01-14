@@ -129,14 +129,5 @@ sub readPacket {
 	}
 }
 
-sub se {
-        my $fh = shift;
-        my $pkg = shift;
-	my $dbg = $pkg;
-	$dbg =~ s/[\r\n]+//sg;
-	dbg("OUT: $dbg");
-        print $fh $pkg."\r\n";
-        return 1;
-}
 
 1;
