@@ -7,19 +7,18 @@ use IO::Socket;
 use IO::Select;
 use C4Toolkit;
 use Getopt::Std;
-use Time::HiRes qw(time);
-use Audio::Mixer;
-use Net::RTP::Packet;
 
 my %Options;
 getopt('h?dv', \%Options);
-
-my $StartTime = time();
 
 dbg("Starting");
 
 if (exists $Options{'h'} && exists $Options{'v'}) {
 	err("Please dont use verbose and daemonize in the same setting?");
+}
+
+if (exists $Options{'v'}) {
+	$dbg = 1;
 }
 
 if (exists $Options{'h'} || exists $Options{'?'}) {
@@ -50,71 +49,25 @@ if (exists $Options{'d'}) {
 $0 = "dspd";
 
 # Fetch our device id from our toolkit.
-my $id = C4Toolkit::DeviceID();
-dbg("Our DeviceID is $id");
+our $device_id = C4Toolkit::DeviceID();
 
-dbg("Opening TCP Control port");
-
-# TCP Control port
-my $Listen = new IO::Socket::INET(
-        Listen    => 1,
-        LocalPort => 6000,
-        Reuse     => 1
-); # TODO: Error-control
-
-dbg("Opening TCP Interface port");
-
-# TCP OTHER Control port
-my $Interface = new IO::Socket::INET(
-        Listen    => 1,
-        LocalPort => 5100,
-        Reuse     => 1
-);
-
-dbg("Opening UDP Control port");
-
-# UDP Control port
-my $Control = new IO::Socket::INET(
-	Proto     => 'udp',
-        LocalPort => 6001,
-);
-
-dbg("Opening UDP Streaming Port");
-
-# Streaming audio port
-my $Audio = new IO::Socket::INET(
-	Proto     => 'udp',
-        LocalPort => 6200,
-);
-
-open(DSP,"|mpg123 -b 128 -");
-
-dbg("Enabling autoflush");
-DSP->autoflush(1);
+dbg("Our DeviceID is $device_id");
 
 my $bufferSize = 8;
 my @buffer = ();
-
-# Only needed on non-posix platforms like windows
-dbg("Setting binmode to Audio-streaming port");
-binmode($Audio);
-
-# Predifine some global variables
-my @mutevolume = (0,0);
-my $mute       = 0;
 
 our $Select = new IO::Select;
 
 dbg("Adding handles to IO::Select");
 # Add our sockets to the IO::Select
-$Select->add($Listen);
-$Select->add($Control);
-$Select->add($Interface);
-$Select->add($Audio);
+$Select->add(SpeakerPoint::Interface::listen());
+$Select->add(SpeakerPoint::Control::listen());
+$Select->add(SpeakerPoint::UDPControl::listen());
+$Select->add(SpeakerPoint::StreamServer::listen());
 
 dbg("Entering mainloop");
 
-my %Type = ();
+SpeakerPoint::AudioControl::reset();
 
 while(1) {
 
@@ -122,214 +75,155 @@ while(1) {
 
 		foreach my $Handle (@ready) {
 
-			if ($Handle == $Listen) {
-				my $new = $Listen->accept;
-				$Select->add($new);
-				$Type{$new} = 'control';
-				dbg("Got a new TCP (control) connection!");
-			}
- 			elsif ($Handle == $Interface) {
-				my $new = $Interface->accept;
-				$Select->add($new);
-				$Type{$new} = 'interface';
-				dbg("Got a new TCP (interface) connection!");
-			} 
-			elsif ($Type{$Handle} eq 'interface') {
-				while(<$Handle>) {
-					s/[\n\r]//sgi;
-					if (/^([a-f0-9]+)i([a-f0-9]+) (.+)/) {
-						
-						my $rserial = "$1r$2 ";
-						my @args = split(/ /,$3);
-						my $cmd = shift(@args);
-						my $arg = join " ", @args;
-						my $feed = "\r\n";
+			# TCP
+			TcpHandle(SpeakerPoint::Interface::checkSocket($Handle),$Handle);
+			TcpHandle(SpeakerPoint::Control::checkSocket($Handle),$Handle);
 
-						dbg(" IN: '$cmd' '$arg'");						
+			# UDP
+			SpeakerPoint::StreamServer::checkSocket($Handle);
+			SpeakerPoint::UDPControl::checkSocket($Handle);
 
-						if ($cmd eq 'c4.sp.spping') {
-							se($Handle, $rserial.$cmd.$feed);
-						}
-						elsif ($cmd eq 'c4.sp.d2' && defined $arg) {
-							if ($args[0] eq 'mute') {
-								if ($args[1] eq 'toggle') {
-									if ($mute) {
-										mute_off();
-									} else {
-										mute_on();
-									}
-								}
-								elsif ($args[1] eq 'on') {
-									mute_on();
-								}
-								elsif ($args[1] eq 'off') {
-									mute_off();
-								}
-							}
-							elsif ($args[0] eq 'volume') {
-								if ($args[1] eq 'setlevel') {
-									Audio::Mixer::set_cval('vol',hex($args[2]),hex($args[2]));
-									se($Handle, $rserial.$cmd." ".$arg.$feed);
-								}
-								
-							} else {
-								dbg("--UNDEFINED--: $cmd $arg");
-								se($Handle, $rserial.$cmd." ".$arg.$feed);
-							}
-						}
-						elsif ($cmd eq 'c4.sp.d2get' && defined $arg) {
-							if ($arg eq 'localamp') {
-								se($Handle, $rserial.$cmd." localamp off".$feed);
-							}
-							elsif ($arg eq 'mute') {
-							
-								se($Handle,$rserial
-									.$cmd
-									." mute "
-									. (
-										$mute ? 
-										'on' : 'off'
-									)
-									.$feed
-								);
-							}
-							elsif ($arg eq 'treble') {	
-								#my @treble = Audio::Mixer::get_cval('treble');
-								se($Handle,$rserial.$cmd." treble 0e".$feed);
-							}
-							elsif ($arg eq 'bass') {
-								#my @bass = Audio::Mixer::get_cval('bass');
-								se($Handle, $rserial.$cmd." bass 0e".$feed);
-							}
-							elsif ($arg eq 'balance') {
-								se($Handle, $rserial.$cmd." balance center 00".$feed);
-							}
-							elsif ($arg eq 'volume') {	
-								my @vol = Audio::Mixer::get_cval('vol');
-								se($Handle, $rserial.$cmd." volume ".sprintf("%2X",$vol[0]).$feed);
-							}
-							else {
-								die("Error3 getting $cmd $arg\n");
-							}
-						}
-						else {
-							die("Error2 getting $cmd");
-						}
+		}
+	}
+}
+
+sub TcpHandle {
+	my ($tcp,$Handle) = @_;
+	if (defined $tcp && $tcp == -1) {
+		$Select->remove($Handle);
+	}
+	elsif (defined $tcp && $tcp) {
+		$Select->add($tcp)
+	}
+}
+
+package SpeakerPoint::Interface;
+use strict;
+use C4Toolkit;
+my %if_sockets;
+
+sub listen {
+	dbg("Opening TCP Interface port");
+
+	# TCP OTHER Control port
+	my $Interface = new IO::Socket::INET(
+	        Listen    => 1,
+	        LocalPort => 5100,
+	        Reuse     => 1
+	); # TODO: Error-control
+
+	$if_sockets{$Interface} = 'listen';
+
+	return $Interface;
+}
+
+sub checkSocket {
+	my $Handle = shift;
+
+	if (exists $if_sockets{$Handle}) {
+		if ($if_sockets{$Handle} eq 'listen') {
+			my $new = $Handle->accept;
+			$if_sockets{$new} = 'data';
+			dbg("Got a new TCP (interface) connection!");
+			return $new;
+		}
+		elsif ($if_sockets{$Handle} eq 'data') {
+			return readPacket($Handle);
+		}
+	}
+} 
+
+
+sub readPacket {
+	my $Handle = shift;
+	$_ = <$Handle>;
+	if (!defined $_ || $_ eq '') {
+		dbg("TCP Client (interface) disconnected");
+		$Select->remove($Handle);
+		return -1;
+	}
+	
+	s/[\n\r]//sgi;
+	if (/^([a-f0-9]+)i([a-f0-9]+) (.+)/) {
+		
+		my $rserial = "$1r$2 ";
+		my @args = split(/ /,$3);
+		my $cmd = shift(@args);
+		my $arg = join " ", @args;
+		my $feed = "\r\n";
+
+		dbg(" IN: '$cmd' '$arg'");						
+
+		if ($cmd eq 'c4.sp.spping') {
+			se($Handle, $rserial.$cmd.$feed);
+		}
+		elsif ($cmd eq 'c4.sp.d2' && defined $arg) {
+			if ($args[0] eq 'mute') {
+				if ($args[1] eq 'toggle') {
+					if (SpeakerPoint::AudioControl::get_mute()) {
+						SpeakerPoint::AudioControl::mute_off();
+					} else {
+						SpeakerPoint::AudioControl::mute_on();
 					}
-				}	
-			}
-			elsif ($Handle == $Audio) {
-				my $RTPFrame;
-				my $Address = recv( $Handle, $RTPFrame, 2048, 0 );
-					
-
-				if (length($RTPFrame) == 9) {
-					dbg("Got a nine-byte / control packet: ".$RTPFrame);
-					$Handle->send($RTPFrame) if $Handle->peeraddr(); # O_o
-				} else {
-					my $packet;
-					local $SIG{__WARN__} = sub {}; # Hide warnings
-					eval { $packet = new Net::RTP::Packet( $RTPFrame ); };
-
-					if (defined($packet) && $packet && $packet->timestamp()) {
-						dbg("Got a valid RTP packet, timestamp: " . $packet->timestamp() ) ;
-
-						if ($packet->payload_type() == 14) { # 14 == MPA
-							my $MPAFrame = $packet->payload();
-							if (ord(substr($MPAFrame,0,1)) == 255 && ord(substr($MPAFrame,1,1)) == 251) { # Is a valid MPEG Audio frame.
-								dbg("Received MPEG Audio frame");
-								push @buffer, $MPAFrame;
-
-								if (@buffer >= $bufferSize) {
-									for (0..$#buffer) {
-										print DSP shift(@buffer);
-									}
-								}
-								$Handle->send(sprintf("%09d", $packet->timestamp())) if $Handle->peeraddr(); # O_o
-							} else {	
-								dbg("Received UNKNOWN data");
-							}
-						}
-					}
-					# if not MPEG Audio, discard packet
+					se($Handle, $rserial.$cmd." ".$arg.$feed);
 				}
-
+				elsif ($args[1] eq 'on') {
+					SpeakerPoint::AudioControl::mute_on();
+					se($Handle, $rserial.$cmd." ".$arg.$feed);
+				}
+				elsif ($args[1] eq 'off') {
+					SpeakerPoint::AudioControl::mute_off();
+					se($Handle, $rserial.$cmd." ".$arg.$feed);
+				}
 			}
-
+			elsif ($args[0] eq 'volume') {
+				if ($args[1] eq 'setlevel') {
+					SpeakerPoint::AudioControl::set_volume(hex($args[2]));
+					se($Handle, $rserial.$cmd." ".$arg.$feed);
+				}
+				
+			} else {
+				dbg("--UNDEFINED--: $cmd $arg");
+				se($Handle, $rserial.$cmd." ".$arg.$feed);
+			}
+		}
+		elsif ($cmd eq 'c4.sp.d2get' && defined $arg) {
+			if ($arg eq 'localamp') {
+				se($Handle, $rserial.$cmd." localamp off".$feed);
+			}
+			elsif ($arg eq 'mute') {
+			
+				se($Handle,$rserial
+					.$cmd
+					." mute "
+					. (
+						SpeakerPoint::AudioControl::get_mute() ? 
+						'on' : 'off'
+					)
+					.$feed
+				);
+			}
+			elsif ($arg eq 'treble') {	
+				#my @treble = Audio::Mixer::get_cval('treble');
+				se($Handle,$rserial.$cmd." treble 0e".$feed);
+			}
+			elsif ($arg eq 'bass') {
+				#my @bass = Audio::Mixer::get_cval('bass');
+				se($Handle, $rserial.$cmd." bass 0e".$feed);
+			}
+			elsif ($arg eq 'balance') {
+				se($Handle, $rserial.$cmd." balance center 00".$feed);
+			}
+			elsif ($arg eq 'volume') {	
+				my $vol = SpeakerPoint::AudioControl::get_volume();
+				se($Handle, $rserial.$cmd." volume ".sprintf("%2X",$vol).$feed);
+			}
 			else {
-
-				my $Command = "";
-				my $sock_addr = recv( $Handle, $Command, 1024, 0 ) or next();
-				$Command =~ s/[\n\r]//sgi;
-
-				if ($Command =~ /^(\d+) (.+)/) {
-
-					my $serial = $1;
-					my $cmd = $2;
-
-					dbg("Got command $Command");
-
-					if ($cmd =~ /reset/i) {
-						dbg("Reseting");
-						se($Handle, "$serial OK reset");
-					}
-
-					elsif ($cmd =~ /^setmut (\d+) (off|on)/i) {
-						se($Handle, "$serial OK SETMUT");
-
-						if (lc($2) eq 'on') {
-							mute_on();
-						}
-						elsif (lc($2) eq 'off') {
-							mute_off();
-						}
-
-						else {
-							die("UNKNOWN: $Command");
-						}
-
-					}
-
-					elsif ($cmd =~ /^getmut (\d+)/i) {
-						if ($mute) {
-							dbg("Sending mute status on");
-							se($Handle, "$serial getmut ON\r\n$serial OK getmut");
-						} else {
-							dbg("Sending mute status off");
-							se($Handle, "$serial getmut OFF\r\n$serial OK getmut");
-						}
-					}
-
-					elsif ($cmd =~ /^getvol (\d+)/i) {
-						if ($mute) {
-							dbg("Sending volume status (muted)");
-							se($Handle, 
-								"$serial getvol $1 "
-								.join(' ',@mutevolume)
-								."\r\n$serial OK getvol"
-							);
-						} else {
-							dbg("Sending volume status");
-							se($Handle,
-								"$serial getvol $1 "
-								.join(' ',Audio::Mixer::get_cval('vol'))
-								."\r\n$serial OK getvol"
-							);
-						}
-					}
-
-					elsif ($cmd =~ /^addch (\d+) ([^ ]+)/i) {
-						dbg("Adding Channel (lol)");
-						se($Handle, 
-							"$serial addch Port or device already open\r\n"
-							."$serial NO addch 6200\r\n"
-						);
-					}
-
-				}
-
-
+				dbg("Error3 getting $cmd $arg\n");
 			}
+		}
+		else {
+			dbg("Error2 getting $cmd");
 		}
 	}
 }
@@ -339,32 +233,350 @@ sub se {
         my $pkg = shift;
 	my $dbg = $pkg;
 	$dbg =~ s/[\r\n]+//sg;
-	dbg("OUT: $pkg");
+	dbg("OUT: $dbg");
         print $fh $pkg."\r\n";
         return 1;
 }
+
+
+package SpeakerPoint::UDPControl;
+use strict;
+use C4Toolkit;
+my %uc_sockets;
+
+sub listen {
+	dbg("Opening UDP Control port");
+
+	# UDP Control port
+	my $Control = new IO::Socket::INET(
+		Proto     => 'udp',
+	        LocalPort => 6001,
+	);
+
+	$uc_sockets{$Control} = 1;
+
+	return $Control;
+}
+
+sub checkSocket {
+	my $Handle = shift;
+
+	if (exists $uc_sockets{$Handle}) {
+		readPacket($Handle);
+	}
+	return undef;
+} 
+
+sub readPacket {
+	my $Handle = shift;
+	my $Command = <$Handle>;
+
+	$Command =~ s/[\n\r]//sgi;
+
+	if ($Command =~ /^(\d+) (.+)/) {
+
+		my $serial = $1;
+		my $cmd = $2;
+
+		dbg("Got command $Command");
+
+		if ($cmd =~ /reset/i) {
+			dbg("Reseting");
+			se($Handle, "$serial OK reset");
+		}
+
+		elsif ($cmd =~ /^setmut (\d+) (off|on)/i) {
+			se($Handle, "$serial OK SETMUT");
+
+			if (lc($2) eq 'on') {
+				SpeakerPoint::AudioControl::mute_on();
+			}
+			elsif (lc($2) eq 'off') {
+				SpeakerPoint::AudioControl::mute_off();
+			}
+
+			else {
+				dbg("UNKNOWN: $Command");
+			}
+
+		}
+
+		elsif ($cmd =~ /^getmut (\d+)/i) {
+			if (SpeakerPoint::AudioControl::get_mute()) {
+				dbg("Sending mute status on");
+				se($Handle, "$serial getmut ON\r\n$serial OK getmut");
+			} else {
+				dbg("Sending mute status off");
+				se($Handle, "$serial getmut OFF\r\n$serial OK getmut");
+			}
+		}
+
+		elsif ($cmd =~ /^getvol (\d+)/i) {
+			if (SpeakerPoint::AudioControl::get_mute()) {
+				dbg("Sending volume status (muted)");
+				se($Handle, 
+					"$serial getvol $1 "
+					.SpeakerPoint::AudioControl::get_volume()
+					."\r\n$serial OK getvol"
+				);
+			} else {
+				dbg("Sending volume status");
+				se($Handle,
+					"$serial getvol $1 "
+					.SpeakerPoint::AudioControl::get_volume()
+					."\r\n$serial OK getvol"
+				);
+			}
+		}
+
+		elsif ($cmd =~ /^addch (\d+) ([^ ]+)/i) {
+			dbg("Adding Channel (lol)");
+			se($Handle, 
+				"$serial addch Port or device already open\r\n"
+				."$serial NO addch 6200\r\n"
+			);
+		}
+
+	}
+
+}
+
+package SpeakerPoint::Control;
+use strict;
+use C4Toolkit;
+my %sockets;
+
+sub listen {
+	dbg("Opening TCP Control port");
+
+	# TCP Control port
+	my $Listen = new IO::Socket::INET(
+	        Listen    => 1,
+	        LocalPort => 6000,
+	        Reuse     => 1
+	); # TODO: Error-control
+
+	$sockets{$Listen} = 'listen';
+
+	return $Listen;
+}
+
+sub checkSocket {
+	my $Handle = shift;
+
+	if (exists $sockets{$Handle}) {
+		if ($sockets{$Handle} eq 'listen') {
+			my $new = $Handle->accept;
+			$sockets{$new} = 'data';
+			dbg("Got a new TCP (control) connection!");
+			return $new;
+		}
+		elsif ($sockets{$Handle} eq 'data') {
+			return readPacket($Handle);
+		}
+	}
+} 
+
+sub readPacket {
+	my $Handle = shift;
+	my $Command = <$Handle>;
+	if (!defined($Command) || $Command eq '') {
+		dbg("TCP Client (control) disconnected");
+		return -1;
+	}
+
+	$Command =~ s/[\n\r]//sgi;
+
+	if ($Command =~ /^(\d+) (.+)/) {
+
+		my $serial = $1;
+		my $cmd = $2;
+
+		dbg("Got command $Command");
+
+		if ($cmd =~ /reset/i) {
+			dbg("Reseting");
+			se($Handle, "$serial OK reset");
+		}
+
+		elsif ($cmd =~ /^setmut (\d+) (off|on)/i) {
+			se($Handle, "$serial OK SETMUT");
+
+			if (lc($2) eq 'on') {
+				SpeakerPoint::AudioControl::mute_on();
+			}
+			elsif (lc($2) eq 'off') {
+				SpeakerPoint::AudioControl::mute_off();
+			}
+
+			else {
+				dbg("UNKNOWN: $Command");
+			}
+
+		}
+
+		elsif ($cmd =~ /^getmut (\d+)/i) {
+			if (SpeakerPoint::AudioControl::get_mute()) {
+				dbg("Sending mute status on");
+				se($Handle, "$serial getmut ON\r\n$serial OK getmut");
+			} else {
+				dbg("Sending mute status off");
+				se($Handle, "$serial getmut OFF\r\n$serial OK getmut");
+			}
+		}
+
+		elsif ($cmd =~ /^getvol (\d+)/i) {
+			if (SpeakerPoint::AudioControl::get_mute()) {
+				dbg("Sending volume status (muted)");
+				se($Handle, 
+					"$serial getvol $1 "
+					.SpeakerPoint::AudioControl::get_volume()
+					."\r\n$serial OK getvol"
+				);
+			} else {
+				dbg("Sending volume status");
+				se($Handle,
+					"$serial getvol $1 "
+					.SpeakerPoint::AudioControl::get_volume()
+					."\r\n$serial OK getvol"
+				);
+			}
+		}
+
+		elsif ($cmd =~ /^addch (\d+) ([^ ]+)/i) {
+			dbg("Adding Channel (lol)");
+			se($Handle, 
+				"$serial addch Port or device already open\r\n"
+				."$serial NO addch 6200\r\n"
+			);
+		}
+
+	}
+	return undef;
+}
+
+package SpeakerPoint::StreamServer;
+use strict;
+use Audio::Mixer;
+use Net::RTP::Packet;
+use C4Toolkit;
+
+my %ss_sockets;
+my $dsp;
+
+sub listen {
+	dbg("Initializing sound");
+	open($dsp,"|mpg123 -b 128 -");
+
+	dbg("Enabling autoflush");
+	$dsp->autoflush(1);
+
+	dbg("Opening UDP Streaming Port");
+
+	# Streaming audio port
+	my $Audio = new IO::Socket::INET(
+		Proto     => 'udp',
+	        LocalPort => 6200,
+	);
+
+	# Only needed on non-posix platforms like windows
+	dbg("Setting binmode to Audio-streaming port");
+	binmode($Audio);
+
+	$ss_sockets{$Audio} = 1;
+
+	return $Audio;
+}
+
+sub checkSocket {
+	my $Handle = shift;
+
+	if (exists $ss_sockets{$Handle}) {
+		readPacket($Handle);
+	}
+} 
+
+sub readPacket {
+	my $Handle = shift();
+	my $RTPFrame;
+	my $Address = recv( $Handle, $RTPFrame, 2048, 0 );
+		
+
+	if (length($RTPFrame) == 9) {
+		dbg("Got a nine-byte / control packet: ".$RTPFrame);
+		$Handle->send($RTPFrame) if $Handle->peeraddr(); # O_o
+	} else {
+		my $packet;
+		local $SIG{__WARN__} = sub {}; # Hide warnings
+		eval { $packet = new Net::RTP::Packet( $RTPFrame ); };
+
+		if (defined($packet) && $packet && $packet->timestamp()) {
+			dbg("Got a valid RTP packet, timestamp: " . $packet->timestamp() ) ;
+
+			if ($packet->payload_type() == 14) { # 14 == MPA
+				my $MPAFrame = $packet->payload();
+				if (ord(substr($MPAFrame,0,1)) == 255 && ord(substr($MPAFrame,1,1)) == 251) { # Is a valid MPEG Audio frame.
+					dbg("Received MPEG Audio frame");
+					push @buffer, $MPAFrame;
+
+					if (@buffer >= $bufferSize) {
+						for (0..$#buffer) {
+							print $dsp shift(@buffer);
+						}
+					}
+					$Handle->send(sprintf("%09d", $packet->timestamp())) if $Handle->peeraddr(); # O_o
+				} else {	
+					dbg("Received UNKNOWN data");
+				}
+			}
+		}
+		# if not MPEG Audio, discard packet
+	}
+}
+
+package SpeakerPoint::AudioControl;
+use strict;
+use Audio::Mixer;
+use C4Toolkit;
+
+my $mute_status = 0;
+my @mute_volume;
+
+sub reset {
+	@mute_volume = Audio::Mixer::get_cval('vol');
+	$mute_status = 0;
+}
+
+sub get_volume {
+	dbg("Retreiving volume");
+	if ($mute_status) {
+		return $mute_volume[0];
+	} else {
+		my @vol = Audio::Mixer::get_cval('vol');
+		return $vol[0];
+	}
+}
+
+sub set_volume {
+	my $vol = shift;
+	dbg("Setting volume");
+	Audio::Mixer::set_cval('vol',$vol,$vol);
+}
+
+sub get_mute {
+	$mute_status;
+}
+
 sub mute_on {
-	dbg("Muting audio");
-	@mutevolume = Audio::Mixer::get_cval('vol');
-	$mute = 1;
+	dbg("Muting audio mute: $mute_status");
+	@mute_volume = Audio::Mixer::get_cval('vol');
+	$mute_status = 1;
 	Audio::Mixer::set_cval('vol',0,0);
 
 }
+
 sub mute_off {
-	dbg("Unmuting audio");
-	Audio::Mixer::set_cval('vol',@mutevolume);
-	$mute = 0;
-}
-sub dbg {
-	my $Message = shift;
-	my ($pkg, $file, $line) = caller;
-	my (undef, undef, undef, $subroutine) = caller(1);
-	if (exists $Options{'v'}) {
-		printf(
-			"[%9.3f: % -20s]: %s\n",
-			time() - $StartTime,
-			defined($subroutine) ? $subroutine : $pkg,
-			$Message
-		);
-	}
+	dbg("Unmuting audio: $mute_status");
+	Audio::Mixer::set_cval('vol',@mute_volume);
+	$mute_status = 0;
 }
