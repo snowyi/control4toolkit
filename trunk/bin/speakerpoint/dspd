@@ -11,12 +11,18 @@ use SpeakerPoint::Interface;
 use SpeakerPoint::Control;
 use SpeakerPoint::UDPControl;
 use SpeakerPoint::StreamServer;
+use Data::Dumper;
 
 my %Options;
-getopt('h?dv', \%Options);
+my $buffersize = 256;
+getopt('h?dvB', \%Options);
 
 if (exists $Options{'h'} && exists $Options{'v'}) {
 	err("Please dont use verbose and daemonize in the same setting?");
+}
+
+if (exists $Options{'B'}) {
+	$buffersize = $Options{'B'};
 }
 
 if (exists $Options{'v'}) {
@@ -33,9 +39,10 @@ Usage
 
 Options available
 
-	-d	Daemonize
-	-v	Verbose/Debug
-	-h	Show this help
+	-B <size>	Buffersize (default: 256)
+	-d		Daemonize
+	-v		Verbose/Debug
+	-h		Show this help
 
 Exiting.
 ';
@@ -64,7 +71,7 @@ dbg("Adding handles to IO::Select");
 $Select->add(SpeakerPoint::Interface::listen());
 $Select->add(SpeakerPoint::Control::listen());
 $Select->add(SpeakerPoint::UDPControl::listen());
-$Select->add(SpeakerPoint::StreamServer::listen());
+$Select->add(SpeakerPoint::StreamServer::listen($buffersize));
 
 dbg("Entering mainloop");
 
@@ -72,7 +79,7 @@ SpeakerPoint::AudioControl::reset();
 
 while(1) {
 
-	while(my @ready = $Select->can_read(60)) {
+	while(my @ready = $Select->can_read(1)) {
 
 		foreach my $Handle (@ready) {
 
@@ -85,6 +92,8 @@ while(1) {
 			SpeakerPoint::UDPControl::checkSocket($Handle);
 
 		}
+		dbg("Checkreset");
+		SpeakerPoint::StreamServer::checkReset();
 	}
 }
 

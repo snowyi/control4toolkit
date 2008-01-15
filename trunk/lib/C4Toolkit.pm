@@ -40,7 +40,7 @@ sub se {
 sub DeviceID {
 	return $DeviceID if defined $DeviceID;
 
-	my $id = `ifconfig|grep HWaddr|awk '{print \$5}'`;
+	my $id = `ifconfig eth0|grep HWaddr|awk '{print \$5}'`;
 	$id =~ s/[^a-f0-9]+//gsi;
 	$DeviceID = 'sp-'.$id;
 	return $DeviceID;
