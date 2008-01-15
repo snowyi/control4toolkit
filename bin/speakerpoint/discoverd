@@ -38,7 +38,10 @@ Exiting.
 	exit(1);
 }
 
-$dbg = 1;
+if (exists $Options{'v'}) {
+	$dbg = 1;
+}
+
 dbg("Starting");
 
 # Fork if we are supposed to
