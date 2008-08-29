@@ -5,8 +5,11 @@ use Data::Dumper;
 use IO::Socket;
 use IO::Select;
 use XML::LibXML;
+use XML::DOM;
 
 my $xml = XML::LibXML->new();
+
+my $inbuffer = '';
 
 my $remote = IO::Socket::INET->new(
 	Proto     => "tcp",
@@ -17,6 +20,8 @@ my $remote = IO::Socket::INET->new(
 my $sel = IO::Select->new();
 $sel->add($remote);
 
+binmode $remote;
+
 # <c4soap name="GetVersionInfo" async="False" />
 # <c4soap name="EnableEvents" async="True"><param name="enable" type="bool">1</param></c4soap>
 # <c4soap name="GetItems" async="False"><param name="filter" type="number">0</param></c4soap>
@@ -26,11 +31,13 @@ $| = 1;      # Enable Autoflush
 my $r;
 
 #$r = SendCommand("GetVersionInfo");
+#print Dumper $r;
 #$r = SendCommand("EnableEvents",1, enable => [ "bool", 1 ] );
+#print Dumper $r;
 $r = SendCommand("GetItems",0,     filter => [ "number", 0 ] );
+print Dumper $r;
 
-print Dump("",$r->{c4soap}->{systemitems}->{item});
-
+#print Dump("",\$r->{c4soap}->{systemitems}->{item});
 
 
 
@@ -84,23 +91,147 @@ sub SendCommand {
 		my $timeout = time() + 2;
 		my $Reply = "";
 
-		while((not length $Reply && $timeout <= time())) {
+		OUTER: while($inbuffer !~ /\0/) {
 			my $data;
-			for my $sock ($sel->can_read(0)) {
+			for my $sock ($sel->can_read(1)) {
 				$sock->recv($data,100);
-				$Reply .= $data;
+				$inbuffer .= $data;
+
+				if (substr($inbuffer,-1,1) eq "\0") {
+					$Reply = $inbuffer;
+					$inbuffer = "";
+					last OUTER;
+				}
 			}
 	
 		}
-		my $doc = $xml->parse_string( $Reply );
-		my $xpc = XML::LibXML::XPathContext->new($doc);
 
-		#use Data::Dumper;
-		#for my $element ($xpc->find('//name')->get_nodelist()) {
-		#	print Dumper $element;
+		#y $doc = $xml->parse_string( $Reply );
+		#
+		#imy $results = $doc->findnodes('/');
+		#foreach my $context ($result->get_nodelist) {
+		#	print $context."\n";
 		#}
+
+		open XMLXML, ">/tmp/xml";
+		print XMLXML $Reply;
+		close XMLXML;
+		$Reply =~ s/.$//;
+
+		$Reply = "<reply>".$Reply."</reply>";
+
+		my $parser = new XML::DOM::Parser;
+		my $doc = $parser->parse($Reply);
+		
+		my $hashref = c4traverse($doc->getElementsByTagName("reply"));
+
+		print trtree($hashref);
+
+#		my $xpc = XML::LibXML::XPathContext->new($doc);
+#
+#
+#		use Data::Dumper;
+#		for my $element ($xpc->find('/')->get_nodelist()) {
+#			print Dumper $element;
+#		}
 
 
 	}
 	return 0;
 }
+
+sub trtree {
+	my ($hashref,$previous) = @_;
+
+	my $prefix = "";
+	if (defined $previous) {
+		$prefix = $previous." ";
+	}
+
+	for my $element_key (keys %{$hashref}) {
+		my $element = $hashref->{$element_key};
+		my $x = 0;
+		for my $subref (@{$element}) {
+			$x++;
+			if (defined $subref->{_text}) {
+			#	print $prefix.$element_key." = '".$subref->{_text}
+			}
+			else {
+				trtree($subref, $prefix);
+				if (defined $subref->{name} || defined $subref->{type}) {
+					if (defined $subref->{name}) {
+						print $prefix.$subref->{name}->[0]->{_text}."\n";
+					}
+				}
+			}
+		}
+	}
+	
+}
+
+#sub c4traverse {
+#
+#	my ($element) = @_;
+#	my $Return = {};
+#
+#	my $ref = ref $element;
+#
+#	if ($ref eq 'XML::DOM::Element') {
+#
+#		my $tag = $element->getTagName();
+#		for my $subnode ($element->getChildNodes()) {
+#			push @{$Return->{$tag}}, c4traverse($subnode);
+#		}
+#	}
+#
+#	elsif ($ref eq 'XML::DOM::Text') {
+#		$Return->{_text} = $element->getData();
+#	}
+#	else {
+#		push @{$Return->{_unknownref}}, $ref;
+#	}
+#	return $Return;
+#
+#}
+#
+#
+#
+sub c4traverse {
+
+	my ($element) = @_;
+	my $Return = {};
+
+	my $ref = ref $element;
+
+	if ($ref eq 'XML::DOM::Element') {
+
+		my $tag = $element->getTagName();
+		for my $subnode ($element->getChildNodes()) {
+			push @{$Return->{$tag}}, c4traverse($subnode);
+		}
+	}
+
+	elsif ($ref eq 'XML::DOM::Text') {
+		$Return->{_text} = $element->getData();
+	}
+	else {
+		push @{$Return->{_unknownref}}, $ref;
+	}
+	return $Return;
+
+}
+
+
+#
+#	my $x = 0;
+#	for (0..length($inbuffer)-1) {
+#		my $chr = substr($inbuffer,$_,1);
+#		my $asc = ord($chr);
+#		if (++$x == 8) {
+#			$x = 0;
+#			print "\n";
+#		}
+#		print sprintf("%3d(%1s) ",$asc,($asc == 10 ? "?" : $chr));
+#	}
+
+
