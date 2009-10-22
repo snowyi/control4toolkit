@@ -30,11 +30,12 @@ $| = 1;      # Enable Autoflush
 
 my $r;
 
-#$r = SendCommand("GetVersionInfo");
 #print Dumper $r;
 #$r = SendCommand("EnableEvents",1, enable => [ "bool", 1 ] );
 #print Dumper $r;
-$r = SendCommand("GetItems",0,     filter => [ "number", 0 ] );
+
+$r = SendCommand("GetItems", 0, filter => [ "number", 0 ] );
+
 print Dumper $r;
 
 #print Dump("",\$r->{c4soap}->{systemitems}->{item});
@@ -72,7 +73,7 @@ sub SendCommand {
 
 	my ($Command,$ASync,%Param) = @_;
 	my $Payload = '<c4soap name="'.$Command.'" async="'.(defined $ASync && $ASync ? 'True' : 'False').'"';
-
+	
 	if (!scalar keys %Param) {
 		$Payload .= " />";
 
@@ -86,7 +87,7 @@ sub SendCommand {
 	}
 
 	if ($remote->send($Payload."\0") == length($Payload)+1) {
-		#return if $ASync;
+		return if $ASync;
 
 		my $timeout = time() + 2;
 		my $Reply = "";
@@ -96,7 +97,6 @@ sub SendCommand {
 			for my $sock ($sel->can_read(1)) {
 				$sock->recv($data,100);
 				$inbuffer .= $data;
-
 				if (substr($inbuffer,-1,1) eq "\0") {
 					$Reply = $inbuffer;
 					$inbuffer = "";
