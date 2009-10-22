@@ -22,6 +22,67 @@ $sel->add($remote);
 
 binmode $remote;
 
+
+
+
+sub trtree {
+	my ($hashref,$res) = @_;
+
+	for my $element_key (keys %{$hashref}) {
+		my $element = $hashref->{$element_key};
+		if ($element_key eq '_text') {
+			next;
+		}
+
+		$res->{key} = $element_key;
+
+		if (ref $element eq 'ARRAY' && defined $element->[0]->{_text}) {
+			$res->{value} = $element->[0]->{_text};
+
+			if ($res->{value} =~ /^\s+$/msi) {
+				delete $res->{value};
+			}
+
+			#if ($res->{value} eq 'id') {
+			#	exit;
+			#}
+		}
+
+		if (ref $element ne 'ARRAY') {
+
+		}
+ 
+		else {	
+			my @children = ();
+			$res->{children} = \@children;
+	
+			for my $subref (@{$element}) {
+				my $childref = {}; 	
+				push @children, $childref;
+				trtree($subref, $childref);
+				if (!scalar keys %{$childref}) {
+					pop @children;
+				}
+			}
+			
+			if (!scalar @children) {
+				delete $res->{children};
+			}
+
+		}
+	}
+
+	
+
+	
+}
+
+
+
+
+
+
+
 # <c4soap name="GetVersionInfo" async="False" />
 # <c4soap name="EnableEvents" async="True"><param name="enable" type="bool">1</param></c4soap>
 # <c4soap name="GetItems" async="False"><param name="filter" type="number">0</param></c4soap>
@@ -34,9 +95,8 @@ my $r;
 #$r = SendCommand("EnableEvents",1, enable => [ "bool", 1 ] );
 #print Dumper $r;
 
-$r = SendCommand("GetItems", 0, filter => [ "number", 0 ] );
+$r = SendCommand("GetItems", 0  );
 
-print Dumper $r;
 
 #print Dump("",\$r->{c4soap}->{systemitems}->{item});
 
@@ -125,7 +185,10 @@ sub SendCommand {
 		
 		my $hashref = c4traverse($doc->getElementsByTagName("reply"));
 
-		print trtree($hashref);
+		my $resultset = {};
+		trtree($hashref, $resultset);
+
+		print Dumper $resultset;
 
 #		my $xpc = XML::LibXML::XPathContext->new($doc);
 #
@@ -139,36 +202,6 @@ sub SendCommand {
 	}
 	return 0;
 }
-
-sub trtree {
-	my ($hashref,$previous) = @_;
-
-	my $prefix = "";
-	if (defined $previous) {
-		$prefix = $previous." ";
-	}
-
-	for my $element_key (keys %{$hashref}) {
-		my $element = $hashref->{$element_key};
-		my $x = 0;
-		for my $subref (@{$element}) {
-			$x++;
-			if (defined $subref->{_text}) {
-			#	print $prefix.$element_key." = '".$subref->{_text}
-			}
-			else {
-				trtree($subref, $prefix);
-				if (defined $subref->{name} || defined $subref->{type}) {
-					if (defined $subref->{name}) {
-						print $prefix.$subref->{name}->[0]->{_text}."\n";
-					}
-				}
-			}
-		}
-	}
-	
-}
-
 #sub c4traverse {
 #
 #	my ($element) = @_;
