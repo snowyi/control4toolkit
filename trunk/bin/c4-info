@@ -30,18 +30,22 @@ sub trtree {
 
 	for my $element_key (keys %{$hashref}) {
 		my $element = $hashref->{$element_key};
+		
 		if ($element_key eq '_text') {
+			if ($hashref->{$element_key} !~ /^\s+$/) {
+				$res->{value} = $hashref->{$element_key};
+			}
 			next;
 		}
 
-		$res->{key} = $element_key;
+		#$res->{key} = $element_key;
 
 		if (ref $element eq 'ARRAY' && defined $element->[0]->{_text}) {
-			$res->{value} = $element->[0]->{_text};
-
-			if ($res->{value} =~ /^\s+$/msi) {
-				delete $res->{value};
-			}
+			$res->{$element_key} = $element->[0]->{_text};
+			
+			#if ($res->{$element_key} =~ /^\s+$/msi) {
+				#delete $res->{$element_key};
+			#}
 
 			#if ($res->{value} eq 'id') {
 			#	exit;
@@ -54,7 +58,7 @@ sub trtree {
  
 		else {	
 			my @children = ();
-			$res->{children} = \@children;
+			$res->{$element_key} = \@children;
 	
 			for my $subref (@{$element}) {
 				my $childref = {}; 	
@@ -64,16 +68,16 @@ sub trtree {
 					pop @children;
 				}
 			}
-			
+				
 			if (!scalar @children) {
-				delete $res->{children};
+				delete $res->{$element_key};
+			}
+			elsif (scalar(@children) == 1 && scalar keys %{$children[0]} == 1 && defined $children[0]->{value}) {
+				$res->{$element_key} = $children[0]->{value};
 			}
 
 		}
 	}
-
-	
-
 	
 }
 
@@ -187,7 +191,8 @@ sub SendCommand {
 
 		my $resultset = {};
 		trtree($hashref, $resultset);
-
+		
+		$Data::Dumper::Indent = 1;
 		print Dumper $resultset;
 
 #		my $xpc = XML::LibXML::XPathContext->new($doc);
