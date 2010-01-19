@@ -48,6 +48,15 @@ This will dump everything on the entire director. Pretty neat to get an overview
   <param name="filter" type="number">0</param>
 </c4soap>
 }}}
+The parameters values for the filter argument are:
+
+  * Item Type = 2 = Site  
+  * Item Type = 3 = Building 
+  * Item Type = 4 = Floor 
+  * Item Type = 6 = Device Type 
+  * Item Type = 7 = Device 
+  * Item Type = 8 = Room 
+
 
 == GetBindingsByDevice ==
 
