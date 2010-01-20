@@ -1,0 +1,371 @@
+#!/usr/bin/perl -w
+
+#
+# Control4 Light Control utility w/UI
+# by Mark Berman <bermanmk@gmail.com>
+#
+# based on work by William Viker and Haakon Nessjoen
+#
+# TODO: fix status updates
+#       prevent turning all the lights off at start
+#       make prettier
+
+use strict;
+use Data::Dumper;
+use IO::Socket;
+use IO::Select;
+use XML::LibXML;
+use XML::DOM;
+use XML::DOM::XPath;
+use Cwd;
+use Tk;
+use Tk::FBox;
+
+#use Text::Wrap;
+#$Text::Wrap::columns = 15;
+
+my $xml = XML::LibXML->new();
+my $c4Configuration;
+
+my $inbuffer = '';
+
+my $remote;
+my $sel;
+
+
+
+
+my $serverIP = "192.168.2.50";
+my $serverPort = "5020";
+my $mw;
+
+
+
+makeWidgets();
+netInit();
+MainLoop;
+
+
+sub netInit {
+    
+    if (defined($sel)) {
+	$sel->remove($remote);
+	$sel = undef;
+	$remote = undef;
+    }
+    
+    $remote = IO::Socket::INET->new(
+	Proto     => "tcp",
+	PeerAddr  => "$serverIP",
+	PeerPort  => "$serverPort",
+	) or die("Ouch: $!");
+    
+    $sel = IO::Select->new();
+    $sel->add($remote);
+    
+    binmode $remote;
+    
+    $| = 1;      # Enable Autoflush
+    
+}
+
+sub makeWidgets {
+    $mw = MainWindow->new;
+    $mw->title("Control4 Light Controller");
+    
+    my $topFrame = $mw->Frame();
+    $topFrame->Entry(-textvariable => \$serverIP, -width => 14)->pack(-side => 'left');
+    $topFrame->Entry(-textvariable => \$serverPort, -width => 5)->pack(-side => 'left');
+    $topFrame->Button(-text => "Connect", -command => [\&netInit])->pack(-side => 'left');
+    $topFrame->Button(-text => "Download Config", -command => [\&getConfiguration])->pack(-side => 'left');
+    $topFrame->Button(-text => "Load Config", -command => [\&readConfiguration])->pack(-side => 'left');
+    $topFrame->Button(-text => "Save Config", -command => [\&writeConfiguration])->pack(-side => 'left');
+    
+    
+    $topFrame->pack(-side => 'top');
+}
+
+sub Dump {
+	my $prefix = shift;
+	my $ref = shift;
+	if (ref $ref eq "HASH") {
+		my %hash = %{$ref};
+		for my $key (keys %hash) {
+			Dump($prefix."->{$key}",$hash{$key});
+		}
+	}
+	elsif (ref $ref eq "ARRAY") {
+		my @array = @{$ref};
+		my $x = 0;
+		for my $value (@array) {
+			Dump($prefix."->[$x]",$value);
+		}
+	}
+	else {
+		if (defined $ref) {
+			print $prefix." = \"$ref\"\n";
+		} else {
+			print $prefix." = undef\n";
+		}
+	}
+}
+
+
+
+sub SendCommand {
+
+	my ($Command,$ASync,%Param) = @_;
+	my $Payload = '<c4soap name="'.$Command.'" async="'.(defined $ASync && $ASync ? 'True' : 'False').'"';
+	
+	if (!scalar keys %Param) {
+		$Payload .= " />";
+
+	} else {
+		$Payload .= ">";
+		for (keys %Param) {
+			$Payload .= '<param name="'.$_.'" type="'.$Param{$_}->[0].'">'.$Param{$_}->[1].'</param>';
+		}
+		$Payload .= "</c4soap>";
+
+	}
+	my $doc;
+	if ($remote->send($Payload."\0") == length($Payload)+1) {
+		return if $ASync;
+
+		my $timeout = time() + 2;
+		my $Reply = "";
+
+		OUTER: while($inbuffer !~ /\0/) {
+			my $data;
+			for my $sock ($sel->can_read(1)) {
+				$sock->recv($data,100);
+				$inbuffer .= $data;
+				if (substr($inbuffer,-1,1) eq "\0") {
+					$Reply = $inbuffer;
+					$inbuffer = "";
+					last OUTER;
+				}
+			}
+	
+		}
+
+		open XMLXML, ">/tmp/xml";
+		print XMLXML $Reply;
+		close XMLXML;
+		$Reply =~ s/.$//;
+
+		$Reply = "<reply>".$Reply."</reply>";
+
+		my $parser = new XML::DOM::Parser;
+		$doc = $parser->parse($Reply);
+
+
+
+	}
+	return $doc;
+}
+
+sub processItemList {
+#    my $doc = shift;
+    my @roomList = $c4Configuration->findnodes('//item[type[1] = 8]');
+    my %roomControlList;
+
+
+    for my $room (@roomList) {
+	my $roomName = $room->findvalue('name[1]');
+#	print $room->findvalue('name[1]') . ", " . $room->findvalue('id[1]') . "\n";
+	#$roomControlList{$roomName} = ();
+	my %tempLightList;
+	for my $light ($room->findnodes('.//item[type[1] = 7 and itemdata/config_data_file = "light.c4i"]')) {
+
+	    my $lightName = $light->findvalue('name[1]');
+	    my $lightID =  $light->findvalue("id[1]");
+	    my $isDimmer = $light->findvalue('.//set_level[1]');
+	    
+	    @{$tempLightList{$lightName}} = ($lightID, $isDimmer);
+	    
+	}
+	for my $light ($room->findnodes('.//item[type[1] = 7 and itemdata/config_data_file = "outlet_light.c4i"]')) {
+	    my $lightName = $light->findvalue('name[1]');
+	    my $lightID =  $light->findvalue("id[1]");
+	    my $isDimmer = $light->findvalue('.//set_level[1]');
+	    
+	    @{$tempLightList{$lightName}} = ($lightID, $isDimmer);
+	    
+	}
+	
+	@{$roomControlList{$roomName}} = %tempLightList;
+	
+    } 
+
+
+    foreach my $roomName (keys(%roomControlList)) {
+	my $tempRoomFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
+	#print "$roomName\n";
+	my %tempRoom;
+	if ($roomControlList{$roomName}) {
+	    %tempRoom = @{$roomControlList{$roomName}};
+	
+	    $tempRoomFrame->Label(-text => "$roomName", -justify => 'left')->pack(-side => 'top');
+	    foreach my $lightName (keys %tempRoom) {
+		my $tempSwitchFrame = $tempRoomFrame->Frame();
+		my @lightParameters = @{$tempRoom{$lightName}};		
+
+		$tempSwitchFrame->Label(-text => "$lightName", -anchor => 'w')->pack(-side => 'left');
+		$tempSwitchFrame->Button(-text => "On", -command => [\&turnLightOn, $lightParameters[0]])->pack(-side => 'right');
+		$tempSwitchFrame->Button(-text => "Off", -command => [\&turnLightOff, $lightParameters[0]])->pack(-side => 'right');
+
+		if ($lightParameters[1] eq 'True') {
+		    #my $lightStatus = 33;
+		    $tempSwitchFrame->Scale(-orient => 'horizontal', -width => 8, -from => 0, -to => 100, -command => [\&setLightLevel, $lightParameters[0], @_])->pack(-side => 'right');
+		}
+		
+		$tempSwitchFrame->pack(-side => 'top', -fill => 'x');	    
+	    }
+	    $tempRoomFrame->pack(-side => 'top', -fill => 'x');
+	    
+	}
+    }
+}
+
+sub turnLightOff {
+   toggleLight($_[0], "OFF");
+}
+sub turnLightOn {
+    toggleLight($_[0], "ON");
+}
+
+sub toggleLight {
+    my $deviceID = $_[0];
+    my $newLightStatus = $_[1];
+    if (($newLightStatus eq "ON") or ($newLightStatus eq "True") or ($newLightStatus eq "1")) {
+	$newLightStatus = "ON";
+    } else {
+	$newLightStatus = "OFF";
+    }
+    
+    return SendCommand("SendToDeviceAsync",1, data => [ "STRING", "<devicecommand><command>$newLightStatus</command><params></params></devicecommand>"],idDevice => ["INT",$deviceID] );
+}
+
+sub setLightLevel {
+    my $deviceID = $_[0];
+    my $newLightLevel = $_[1];
+    #print "Set Light level called with (deviceID: $deviceID, newLightLevel:$newLightLevel)\n";
+    return SendCommand("SendToDeviceAsync",1, data => [ "STRING", "<devicecommand><command>SET_LEVEL</command><params><param><name>LEVEL</name><value type=\"INT\"><static>$newLightLevel</static></value></param></params></devicecommand>"],idDevice => ["INT",$deviceID] );
+    
+}
+
+sub getConfiguration {
+    $c4Configuration = SendCommand("GetItems", 0  );
+    processItemList();
+    return $c4Configuration;
+}
+
+sub readConfiguration {
+    my $parser = new XML::DOM::Parser;
+    
+    my  $fileName = $mw->FBox(-type => "open")->Show;
+    
+    $c4Configuration  = $parser->parsefile($fileName);
+    processItemList();
+    return $c4Configuration;
+    
+}
+
+sub writeConfiguration {
+
+
+    #$fileDg->configure(-FPat => '*xml', -ShowAll => 'NO');
+    my $fileName = $mw->FBox(-type => "save")->Show;
+
+
+    $c4Configuration->printToFile($fileName);
+    
+    return $c4Configuration;
+    
+}
+
+
+
+
+
+sub c4traverse {
+
+	my ($element) = @_;
+	my $Return = {};
+
+	my $ref = ref $element;
+
+	if ($ref eq 'XML::DOM::Element') {
+
+		my $tag = $element->getTagName();
+		for my $subnode ($element->getChildNodes()) {
+			push @{$Return->{$tag}}, c4traverse($subnode);
+		}
+	}
+
+	elsif ($ref eq 'XML::DOM::Text') {
+		$Return->{_text} = $element->getData();
+	}
+	else {
+		push @{$Return->{_unknownref}}, $ref;
+	}
+	return $Return;
+
+}
+
+sub trtree {
+	my ($hashref,$res) = @_;
+
+	for my $element_key (keys %{$hashref}) {
+		my $element = $hashref->{$element_key};
+		
+		if ($element_key eq '_text') {
+			if ($hashref->{$element_key} !~ /^\s+$/) {
+				$res->{value} = $hashref->{$element_key};
+			}
+			next;
+		}
+
+		#$res->{key} = $element_key;
+
+		if (ref $element eq 'ARRAY' && defined $element->[0]->{_text}) {
+			$res->{$element_key} = $element->[0]->{_text};
+			
+			#if ($res->{$element_key} =~ /^\s+$/msi) {
+				#delete $res->{$element_key};
+			#}
+
+			#if ($res->{value} eq 'id') {
+			#	exit;
+			#}
+		}
+
+		if (ref $element ne 'ARRAY') {
+
+		}
+ 
+		else {	
+			my @children = ();
+			$res->{$element_key} = \@children;
+	
+			for my $subref (@{$element}) {
+				my $childref = {}; 	
+				push @children, $childref;
+				trtree($subref, $childref);
+				if (!scalar keys %{$childref}) {
+					pop @children;
+				}
+			}
+				
+			if (!scalar @children) {
+				delete $res->{$element_key};
+			}
+			elsif (scalar(@children) == 1 && scalar keys %{$children[0]} == 1 && defined $children[0]->{value}) {
+				$res->{$element_key} = $children[0]->{value};
+			}
+
+		}
+	}	
+	
+}
