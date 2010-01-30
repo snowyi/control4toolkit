@@ -7,6 +7,28 @@ To this page I will try to add everything I understand how works in the control4
 
 = c4soap =
 
+==GetVariable ==
+Get the value of a variable. 
+ * iddevice: the id of the deviceto get the variable for
+ * idvariable: the variable to retrieve. The only one I use so far is 1001, LIGHT_LEVEL
+
+{{{
+<c4soap name="GetVariable" async="False">
+ <param name = "iddevice" type = "INT">123</param>
+ <param name = "idvariable" type = "INT">1001</param> 
+</c4soap>
+}}}
+
+the reply will be of the form:
+
+{{{
+<c4soap name="GetVariable" seq="" result="1">
+ <variable deviceid="123" variableid="1001" name="LIGHT_LEVEL" type="2" readonly="0" hidden="0" bindingid="0" bindingname="">30</variable>
+</c4soap>
+}}}
+
+In this case 30 is the light level.
+
 == GetVersionInfo ==
 When the director have found a device to connect to, it uses the xml-rpc-soap'ish interface "c4soap".
 
