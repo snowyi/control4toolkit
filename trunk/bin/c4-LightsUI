@@ -7,8 +7,11 @@
 # based on work by William Viker and Haakon Nessjoen
 #
 # TODO: fix status updates
-#       prevent turning all the lights off at start
+#       
 #       make prettier
+#
+#       port to python?
+
 
 use strict;
 use Data::Dumper;
@@ -21,6 +24,10 @@ use Cwd;
 use Tk;
 use Tk::FBox;
 
+use C4Toolkit::Item::Room;
+use C4Toolkit::Item::Light;
+#require C4Toolkit;
+
 #use Text::Wrap;
 #$Text::Wrap::columns = 15;
 
@@ -32,13 +39,13 @@ my $inbuffer = '';
 my $remote;
 my $sel;
 
-
-
-
 my $serverIP = "192.168.2.50";
 my $serverPort = "5020";
 my $mw;
 
+
+my %rooms;
+my %lights;
 
 
 makeWidgets();
@@ -173,58 +180,75 @@ sub processItemList {
 
     for my $room (@roomList) {
 	my $roomName = $room->findvalue('name[1]');
-#	print $room->findvalue('name[1]') . ", " . $room->findvalue('id[1]') . "\n";
-	#$roomControlList{$roomName} = ();
-	my %tempLightList;
-	for my $light ($room->findnodes('.//item[type[1] = 7 and itemdata/config_data_file = "light.c4i"]')) {
+	my $roomId = $room->findvalue('id[1]');
+	my $light;
+	
+
+	$rooms{$roomId} = new Room($roomName, $roomId, []);
+
+	for $light ($room->findnodes('.//item[type[1] = 7 and itemdata/config_data_file = "light.c4i"]')) {
 
 	    my $lightName = $light->findvalue('name[1]');
-	    my $lightID =  $light->findvalue("id[1]");
+	    my $lightId =  $light->findvalue("id[1]");
 	    my $isDimmer = $light->findvalue('.//set_level[1]');
 	    
-	    @{$tempLightList{$lightName}} = ($lightID, $isDimmer);
-	    
+	    $rooms{$roomId}->addLight($lightId);
+	    $lights{$lightId} = new Light($lightName, $lightId, $isDimmer);
+
 	}
-	for my $light ($room->findnodes('.//item[type[1] = 7 and itemdata/config_data_file = "outlet_light.c4i"]')) {
+	
+	for $light ($room->findnodes('.//item[type[1] = 7 and itemdata/config_data_file = "outlet_light.c4i"]')) {
+
 	    my $lightName = $light->findvalue('name[1]');
-	    my $lightID =  $light->findvalue("id[1]");
-	    my $isDimmer = $light->findvalue('.//set_level[1]');
-	    
-	    @{$tempLightList{$lightName}} = ($lightID, $isDimmer);
-	    
+	    my $lightId =  $light->findvalue("id[1]");
+	    my $isDimmer = $light->findvalue('.//set_level[1]');	 	    
+
+	    $rooms{$roomId}->addLight($lightId);
+	    $lights{$lightId} = new Light($lightName, $lightId, $isDimmer);
+
 	}
-	
-	@{$roomControlList{$roomName}} = %tempLightList;
-	
     } 
+}
 
 
-    foreach my $roomName (keys(%roomControlList)) {
+sub makeUI {
+
+    foreach my $tempRoomId (keys(%rooms)) {
 	my $tempRoomFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
-	#print "$roomName\n";
-	my %tempRoom;
-	if ($roomControlList{$roomName}) {
-	    %tempRoom = @{$roomControlList{$roomName}};
+	my $room_obj = $rooms{$tempRoomId};
 	
-	    $tempRoomFrame->Label(-text => "$roomName", -justify => 'left')->pack(-side => 'top');
-	    foreach my $lightName (keys %tempRoom) {
-		my $tempSwitchFrame = $tempRoomFrame->Frame();
-		my @lightParameters = @{$tempRoom{$lightName}};		
+	$tempRoomFrame->Label(-text => $rooms{$tempRoomId}->getName(), -justify => 'left')->pack(-side => 'top');
+	
+	my $tempLightList_ref =  $room_obj->getLights();
 
-		$tempSwitchFrame->Label(-text => "$lightName", -anchor => 'w')->pack(-side => 'left');
-		$tempSwitchFrame->Button(-text => "On", -command => [\&turnLightOn, $lightParameters[0]])->pack(-side => 'right');
-		$tempSwitchFrame->Button(-text => "Off", -command => [\&turnLightOff, $lightParameters[0]])->pack(-side => 'right');
-
-		if ($lightParameters[1] eq 'True') {
-		    #my $lightStatus = 33;
-		    $tempSwitchFrame->Scale(-orient => 'horizontal', -width => 8, -from => 0, -to => 100, -command => [\&setLightLevel, $lightParameters[0], @_])->pack(-side => 'right');
-		}
-		
-		$tempSwitchFrame->pack(-side => 'top', -fill => 'x');	    
-	    }
-	    $tempRoomFrame->pack(-side => 'top', -fill => 'x');
+	if ($tempLightList_ref) {
+	    my @tempLightList = @$tempLightList_ref;
 	    
-	}
+	    my $tempLightId;
+	    foreach $tempLightId (@tempLightList) {		
+		my $tempLight = $lights{$tempLightId};
+		if ($tempLight) {
+		    my $tempSwitchFrame = $tempRoomFrame->Frame();
+		    
+		    $tempSwitchFrame->Label(-text => $tempLight->getName(), -anchor => 'w')->pack(-side => 'left');
+		    $tempSwitchFrame->Button(-text => "On", -command => [\&turnLightOn, $tempLight->getID()])->pack(-side => 'right');
+		    $tempSwitchFrame->Button(-text => "Off", -command => [\&turnLightOff, $tempLight->getID()])->pack(-side => 'right');
+		    
+		    if ($tempLight->getDims() eq 'True') {
+			my $tempLightLevel = getLightLevel($tempLightId);
+			$tempLight->{_Level} = $tempLightLevel;
+			$tempSwitchFrame->Scale(-orient => 'horizontal', -width => 8, -from => 0, -to => 100,-variable => \$tempLight->{_Level}, -command => [\&setLightLevel, $tempLight->getID(), @_])->pack(-side => 'right');
+			
+			
+			
+		    }			    		
+		    $tempSwitchFrame->pack(-side => 'top', -fill => 'x');	    
+		} else {
+		    print "bad reference:  \n";
+		}
+	    }
+	}	
+	$tempRoomFrame->pack(-side => 'top', -fill => 'x');		
     }
 }
 
@@ -255,9 +279,34 @@ sub setLightLevel {
     
 }
 
+sub getLightLevel {
+    my $lightId = shift;
+    print "getting level of id $lightId\n";
+    my $reply = SendCommand("GetVariable", 0, iddevice => ["INT", $lightId], idvariable => ["INT", 1001]);
+    
+    my @vars = $reply->getElementsByTagName("variable");
+
+    foreach my $var (@vars) {
+	#print "\tstr:" . $var->toString() . "\n";
+	#print "\tid:" . $var->getAttribute("deviceid") . "\n";
+	if ($var->getAttribute("deviceid") eq "$lightId") {
+
+	    return $var->getFirstChild()->getNodeValue();
+
+	#my $tempAttr = $var->getFirstChild();
+	#print "\tval:" . $tempAttr->getNodeValue() . "\n";
+	    
+	}
+    }
+    #default to off -- bad reply or none received
+    return 0;
+    
+}
+
 sub getConfiguration {
     $c4Configuration = SendCommand("GetItems", 0  );
     processItemList();
+    makeUI();
     return $c4Configuration;
 }
 
@@ -268,6 +317,7 @@ sub readConfiguration {
     
     $c4Configuration  = $parser->parsefile($fileName);
     processItemList();
+    makeUI();
     return $c4Configuration;
     
 }
