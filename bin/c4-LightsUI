@@ -42,6 +42,7 @@ my $sel;
 my $serverIP = "192.168.2.50";
 my $serverPort = "5020";
 my $mw;
+my $lightFrame;
 
 
 my %rooms;
@@ -80,6 +81,8 @@ sub makeWidgets {
     $mw = MainWindow->new;
     $mw->title("Control4 Light Controller");
     
+
+    
     my $topFrame = $mw->Frame();
     $topFrame->Entry(-textvariable => \$serverIP, -width => 14)->pack(-side => 'left');
     $topFrame->Entry(-textvariable => \$serverPort, -width => 5)->pack(-side => 'left');
@@ -87,9 +90,11 @@ sub makeWidgets {
     $topFrame->Button(-text => "Download Config", -command => [\&getConfiguration])->pack(-side => 'left');
     $topFrame->Button(-text => "Load Config", -command => [\&readConfiguration])->pack(-side => 'left');
     $topFrame->Button(-text => "Save Config", -command => [\&writeConfiguration])->pack(-side => 'left');
-    
-    
     $topFrame->pack(-side => 'top');
+
+    $lightFrame = $mw->Scrolled('Frame', -scrollbars => 'oe')->pack(-side => 'top', -fill => 'both', -expand => 'True');
+#    my $mwScroll = $lightFrame->Scrollbar(-command => ['yview', $lightFrame])->pack(-side => 'right', -fill => 'y');
+    
 }
 
 sub Dump {
@@ -214,7 +219,7 @@ sub processItemList {
 sub makeUI {
 
     foreach my $tempRoomId (keys(%rooms)) {
-	my $tempRoomFrame = $mw->Frame(-borderwidth => 2, -relief => 'groove');
+	my $tempRoomFrame = $lightFrame->Frame(-borderwidth => 2, -relief => 'groove');
 	my $room_obj = $rooms{$tempRoomId};
 	
 	$tempRoomFrame->Label(-text => $rooms{$tempRoomId}->getName(), -justify => 'left')->pack(-side => 'top');
@@ -281,9 +286,9 @@ sub setLightLevel {
 
 sub getLightLevel {
     my $lightId = shift;
-    print "getting level of id $lightId\n";
+    #print "getting level of id $lightId\n";
     my $reply = SendCommand("GetVariable", 0, iddevice => ["INT", $lightId], idvariable => ["INT", 1001]);
-    
+    #print $reply->toString() . "\n";
     my @vars = $reply->getElementsByTagName("variable");
 
     foreach my $var (@vars) {
